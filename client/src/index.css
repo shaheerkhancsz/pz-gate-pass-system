@@ -1,0 +1,47 @@
+@import url('./styles/mobile.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+/* Print styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  /* Force background and text colors for printing */
+  * {
+    color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Print container styling */
+  .print-container {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  /* Ensure only print-only content is visible */
+  .print-only {
+    display: block !important;
+    page-break-inside: avoid;
+  }
+}

@@ -1,0 +1,743 @@
+import React, { useState } from "react";
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useLocation } from "wouter";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Textarea } from "@/components/ui/textarea";
+import { formatDate, formatDateTime, getTodayISO, formatCNIC, formatPhoneNumber, departmentOptions, cn } from "@/lib/utils";
+import { gatePassWithItemsSchema, type Customer, type Driver } from "@shared/schema";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarIcon } from "lucide-react";
+import { CustomerSelection } from "./CustomerSelection";
+import { DriverSelection } from "./DriverSelection";
+import { DocumentPanel } from "@/components/documents";
+
+// Define a consistent item type
+type ItemType = {
+  name: string;
+  sku: string;
+  quantity: number;
+};
+
+// Create a valid item schema
+const itemSchema = z.object({
+  name: z.string().min(1, "Item name is required"),
+  sku: z.string().min(1, "SKU is required"),
+  quantity: z.number().min(1, "Quantity must be at least 1"),
+});
+
+// Extend the schema with client-side validation
+const formSchema = gatePassWithItemsSchema.extend({
+  date: z.string().min(1, "Date is required"),
+  // Ensure we have at least one item
+  items: z.array(itemSchema).nonempty("At least one item is required"),
+  // Ensure these fields are strings and not null
+  customerPhone: z.string().optional().default(""),
+  notes: z.string().optional().default(""),
+  // Optional fields for database references
+  customerId: z.number().optional().nullable(),
+  driverId: z.number().optional().nullable()
+});
+
+type FormValues = z.infer<typeof formSchema>;
+
+export function GatePassForm() {
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const todayISO = getTodayISO();
+  
+  // State for customer and driver selection
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
+  
+  // State for tracking created gate pass ID (for document attachment)
+  const [createdGatePassId, setCreatedGatePassId] = useState<number | null>(null);
+  const [showDocumentUpload, setShowDocumentUpload] = useState<boolean>(false);
+  
+  // For debugging
+  console.log("showDocumentUpload:", showDocumentUpload, "createdGatePassId:", createdGatePassId);
+
+  // Form setup
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      date: todayISO,
+      customerName: "",
+      customerPhone: "", // Added customer phone field
+      deliveryAddress: "",
+      driverName: "",
+      driverMobile: "",
+      driverCnic: "",
+      deliveryVanNumber: "",
+      department: "Warehouse", // Default to Warehouse instead of empty string
+      notes: "", // Added notes field
+      createdBy: user?.fullName || "",
+      createdById: user?.id || 0,
+      status: "pending",
+      items: [{ name: "", sku: "", quantity: 1 }],
+      // Add these fields for customer and driver IDs
+      customerId: undefined,
+      driverId: undefined,
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    name: "items",
+    control: form.control,
+  });
+
+  // Handle general submission
+  const createGatePassMutation = useMutation({
+    mutationFn: async (data: FormValues) => {
+      const response = await apiRequest("POST", "/api/gate-passes", data);
+      return response.json();
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/gate-passes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/statistics"] });
+      
+      // Store the created gate pass ID and show document upload interface
+      setCreatedGatePassId(response.id);
+      setShowDocumentUpload(true);
+      
+      toast({
+        title: "Gate Pass Created",
+        description: "The gate pass was created successfully. You can now attach documents.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create gate pass",
+        variant: "destructive",
+      });
+    },
+  });
+  
+  // Handle submission and printing
+  const printGatePassMutation = useMutation({
+    mutationFn: async (data: FormValues) => {
+      const response = await apiRequest("POST", "/api/gate-passes", data);
+      return response.json();
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/gate-passes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/statistics"] });
+      toast({
+        title: "Gate Pass Created",
+        description: "Opening print view...",
+      });
+      // Navigate to print page with the gate pass ID
+      setLocation(`/print-gate-pass/${response.id}`);
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create gate pass for printing",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const onSubmit = (data: FormValues) => {
+    // First ensure all fields are validated
+    form.trigger().then(isValid => {
+      if (isValid) {
+        // Convert quantity from string to number for each item
+        const formattedData = {
+          ...data,
+          items: data.items.map(item => ({
+            ...item,
+            quantity: Number(item.quantity),
+          })),
+        };
+        
+        // Ensure the items array matches the expected type
+        const submissionData = {
+          ...formattedData,
+          items: formattedData.items.length > 0 ? formattedData.items : [{ name: "", sku: "", quantity: 0 }],
+        };
+        createGatePassMutation.mutate(submissionData);
+      } else {
+        toast({
+          title: "Validation Error",
+          description: "Please fill in all required fields correctly",
+          variant: "destructive",
+        });
+      }
+    });
+  };
+
+  // CNIC and phone formatting
+  const handleCnicChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formattedCnic = formatCNIC(e.target.value);
+    form.setValue("driverCnic", formattedCnic);
+  };
+
+  const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formattedMobile = formatPhoneNumber(e.target.value);
+    form.setValue("driverMobile", formattedMobile);
+  };
+  
+  // Handle customer selection
+  const handleSelectCustomer = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    
+    // Update form values
+    form.setValue("customerName", customer.name);
+    form.setValue("customerPhone", customer.phone || "");
+    form.setValue("customerId", customer.id);
+    
+    // If customer has an address, update delivery address
+    if (customer.address) {
+      form.setValue("deliveryAddress", customer.address);
+    }
+  };
+  
+  const handleClearCustomer = () => {
+    setSelectedCustomer(null);
+    
+    // Clear customer related fields
+    form.setValue("customerName", "");
+    form.setValue("customerPhone", "");
+    form.setValue("customerId", null);
+  };
+  
+  // Handle driver selection
+  const handleSelectDriver = (driver: Driver) => {
+    setSelectedDriver(driver);
+    
+    // Update form values
+    form.setValue("driverName", driver.name);
+    form.setValue("driverMobile", driver.mobile);
+    form.setValue("driverCnic", driver.cnic);
+    form.setValue("driverId", driver.id);
+    
+    // If driver has a vehicle number, update delivery van number
+    if (driver.vehicleNumber) {
+      form.setValue("deliveryVanNumber", driver.vehicleNumber);
+    }
+  };
+  
+  const handleClearDriver = () => {
+    setSelectedDriver(null);
+    
+    // Clear driver related fields
+    form.setValue("driverName", "");
+    form.setValue("driverMobile", "");
+    form.setValue("driverCnic", "");
+    form.setValue("deliveryVanNumber", "");
+    form.setValue("driverId", null);
+  };
+
+  return (
+    <Card className="bg-white rounded-lg shadow-sm">
+      <CardContent className="p-6">
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+            {/* Basic Information Section */}
+            <div>
+              <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">Basic Information</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="date"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Issue Date</FormLabel>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "pl-3 text-left font-normal",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value ? formatDate(field.value) : "Select date"}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value ? new Date(field.value) : new Date()}
+                              onSelect={(date) => field.onChange(date ? formatDate(date) : "")}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="department"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Department</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                          defaultValue="Warehouse"
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Department" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {departmentOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  {/* Customer Selection Component */}
+                  <CustomerSelection
+                    selectedCustomer={selectedCustomer}
+                    onSelectCustomer={handleSelectCustomer}
+                    onClearCustomer={handleClearCustomer}
+                  />
+                  
+                  {/* Only show these fields if no customer is selected */}
+                  {!selectedCustomer && (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="customerName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Customer / Person Name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Enter customer name" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      
+                      <FormField
+                        control={form.control}
+                        name="customerPhone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Customer / Person Phone Number</FormLabel>
+                            <FormControl>
+                              <Input 
+                                placeholder="e.g. 0300-1234567" 
+                                {...field} 
+                                onChange={(e) => {
+                                  const formattedPhone = formatPhoneNumber(e.target.value);
+                                  form.setValue("customerPhone", formattedPhone);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+
+                  <FormField
+                    control={form.control}
+                    name="deliveryAddress"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Delivery Address</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            placeholder="Enter delivery address"
+                            className="resize-none"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="createdBy"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Created By</FormLabel>
+                        <FormControl>
+                          <Input
+                            value={user?.fullName || ""}
+                            readOnly
+                            className="bg-neutral-lightest"
+                          />
+                        </FormControl>
+                        <p className="text-xs text-neutral-gray mt-1">Auto-filled from your account</p>
+                      </FormItem>
+                    )}
+                  />
+
+                  <div>
+                    <FormLabel>Created Date & Time</FormLabel>
+                    <Input
+                      value={formatDateTime(new Date())}
+                      readOnly
+                      className="bg-neutral-lightest"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Item Details Section */}
+            <div>
+              <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">Item Details</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-neutral-light">
+                      <th className="px-4 py-2 text-left text-sm font-medium">Item Name</th>
+                      <th className="px-4 py-2 text-left text-sm font-medium">SKU Number</th>
+                      <th className="px-4 py-2 text-left text-sm font-medium">Quantity</th>
+                      <th className="px-4 py-2 text-left text-sm font-medium w-24">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fields.map((field, index) => (
+                      <tr key={field.id}>
+                        <td className="px-4 py-2">
+                          <Input
+                            {...form.register(`items.${index}.name`)}
+                            placeholder="Enter item name"
+                            className="w-full px-3 py-2"
+                          />
+                          {form.formState.errors.items?.[index]?.name && (
+                            <p className="text-xs text-red-500 mt-1">
+                              {form.formState.errors.items[index]?.name?.message}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          <Input
+                            {...form.register(`items.${index}.sku`)}
+                            placeholder="Enter SKU number"
+                            className="w-full px-3 py-2"
+                          />
+                          {form.formState.errors.items?.[index]?.sku && (
+                            <p className="text-xs text-red-500 mt-1">
+                              {form.formState.errors.items[index]?.sku?.message}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          <Input
+                            {...form.register(`items.${index}.quantity`, {
+                              valueAsNumber: true,
+                            })}
+                            type="number"
+                            placeholder="Qty"
+                            min="1"
+                            className="w-full px-3 py-2"
+                          />
+                          {form.formState.errors.items?.[index]?.quantity && (
+                            <p className="text-xs text-red-500 mt-1">
+                              {form.formState.errors.items[index]?.quantity?.message}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          {fields.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => remove(index)}
+                              className="text-error hover:text-error-dark h-auto w-auto p-1"
+                            >
+                              <span className="material-icons">delete</span>
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 flex justify-between items-center">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => append({ name: "", sku: "", quantity: 1 })}
+                  className="flex items-center text-primary hover:text-primary-dark"
+                >
+                  <span className="material-icons mr-1">add_circle</span> Add Another Item
+                </Button>
+                
+                <div className="text-sm font-medium bg-neutral-light p-3 rounded">
+                  <div className="flex space-x-6">
+                    <div>
+                      <span className="text-neutral-dark">Total Items:</span>{" "}
+                      <span className="font-bold">{fields.length}</span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-dark">Total Quantity:</span>{" "}
+                      <span className="font-bold">
+                        {fields.reduce((sum, _, index) => {
+                          const quantity = form.getValues(`items.${index}.quantity`);
+                          return sum + (Number.isNaN(Number(quantity)) ? 0 : Number(quantity));
+                        }, 0)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Notes Section */}
+            <div>
+              <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">Notes</h3>
+              <div className="w-full">
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Additional Notes</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Enter any additional notes or comments here..."
+                          className="resize-none min-h-[120px]"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+            
+            {/* Driver & Delivery Details Section */}
+            <div>
+              <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">
+                Driver & Delivery Details
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="space-y-4">
+                  {/* Driver Selection Component */}
+                  <DriverSelection
+                    selectedDriver={selectedDriver}
+                    onSelectDriver={handleSelectDriver}
+                    onClearDriver={handleClearDriver}
+                  />
+                  
+                  {/* Only show these fields if no driver is selected */}
+                  {!selectedDriver && (
+                    <>
+                      <FormField
+                        control={form.control}
+                        name="driverName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Driver Name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Enter driver name" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="driverMobile"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Driver Mobile Number</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="e.g. 0300-1234567"
+                                {...field}
+                                onChange={handleMobileChange}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="driverCnic"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Driver CNIC Number</FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="e.g. 42201-1234567-8"
+                                {...field}
+                                onChange={handleCnicChange}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="deliveryVanNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Delivery Van Number</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. KHI-12345" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Always show the form's buttons section */}
+            <div className="flex justify-end space-x-4">
+              {/* Default buttons for creating a new gate pass */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLocation("/gate-passes")}
+              >
+                Cancel
+              </Button>
+              
+              <Button
+                type="submit"
+                className="bg-success hover:bg-opacity-90 text-white"
+                disabled={createGatePassMutation.isPending}
+              >
+                <span className="material-icons mr-1">save</span>
+                {createGatePassMutation.isPending ? "Saving..." : "Save & Submit"}
+              </Button>
+              
+              <Button
+                type="button"
+                className="bg-primary hover:bg-opacity-90 text-white"
+                onClick={() => {
+                  // First validate all fields thoroughly
+                  form.trigger().then(isValid => {
+                    if (isValid) {
+                      // Create a submission for print 
+                      const formData = form.getValues();
+                      // Convert quantity from string to number for each item
+                      const formattedData = {
+                        ...formData,
+                        items: formData.items.map(item => ({
+                          ...item,
+                          quantity: Number(item.quantity),
+                        })),
+                      };
+                      
+                      // Submit the form data and redirect to print page
+                      // Ensure the items array matches the expected type
+                      const submissionData = {
+                        ...formattedData,
+                        items: formattedData.items.length > 0 ? formattedData.items : [{ name: "", sku: "", quantity: 0 }],
+                      };
+                      printGatePassMutation.mutate(submissionData);
+                    } else {
+                      // Show validation errors
+                      toast({
+                        title: "Validation Error",
+                        description: "Please fill in all required fields correctly before printing.",
+                        variant: "destructive",
+                      });
+                    }
+                  });
+                }}
+                disabled={createGatePassMutation.isPending || printGatePassMutation.isPending}
+              >
+                <span className="material-icons mr-1">print</span>
+                {printGatePassMutation.isPending ? "Saving & Printing..." : "Save & Print"}
+              </Button>
+            </div>
+            
+            {/* Document Upload Section - Only show after gate pass created */}
+            {showDocumentUpload && createdGatePassId && (
+              <div className="mt-8 border-t border-neutral-medium pt-6">
+                <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">
+                  Attach Documents <span className="text-neutral-gray text-sm">(Optional)</span>
+                </h3>
+                <div className="bg-neutral-lightest p-4 rounded-lg">
+                  <DocumentPanel 
+                    entityType="gatePass"
+                    entityId={createdGatePassId}
+                    title="Gate Pass Documents"
+                  />
+                </div>
+                
+                {/* Post-creation action buttons */}
+                <div className="flex justify-end space-x-4 mt-8">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setLocation(`/view-gate-pass/${createdGatePassId}`)}
+                  >
+                    <span className="material-icons mr-1">visibility</span>
+                    View Gate Pass
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-primary hover:bg-opacity-90 text-white"
+                    onClick={() => setLocation(`/print-gate-pass/${createdGatePassId}`)}
+                  >
+                    <span className="material-icons mr-1">print</span>
+                    Print Gate Pass
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-success hover:bg-opacity-90 text-white"
+                    onClick={() => setLocation("/gate-passes")}
+                  >
+                    <span className="material-icons mr-1">done_all</span>
+                    Finish
+                  </Button>
+                </div>
+              </div>
+            )}
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
