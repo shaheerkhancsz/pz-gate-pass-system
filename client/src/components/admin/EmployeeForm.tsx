@@ -8,22 +8,23 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  Form, 
-  FormControl, 
-  FormField, 
-  FormItem, 
-  FormLabel, 
-  FormMessage 
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage
 } from "@/components/ui/form";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
 } from "@/components/ui/select";
-import { departmentOptions, formatCNIC, formatPhoneNumber } from "@/lib/utils";
+import { formatCNIC, formatPhoneNumber } from "@/lib/utils";
+import { useDepartments } from "@/hooks/use-departments";
 import { z } from "zod";
 
 // Define Role interface
@@ -31,6 +32,13 @@ interface Role {
   id: number;
   name: string;
   description?: string;
+}
+
+interface Company {
+  id: number;
+  name: string;
+  shortName?: string;
+  active?: boolean;
 }
 
 // Extend the schema with additional validation
@@ -43,6 +51,7 @@ const formSchema = insertUserSchema.extend({
     required_error: "Role is required",
     invalid_type_error: "Role must be a number"
   }),
+  companyId: z.coerce.number().optional(),
   phoneNumber: z.string().optional().default(""),
   cnic: z.string().optional().default(""),
 }).refine((data) => data.password === data.confirmPassword, {
@@ -69,6 +78,18 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
     }
   });
 
+  // Fetch available companies
+  const { data: companies } = useQuery<Company[]>({
+    queryKey: ["/api/companies"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/companies");
+      return response.json();
+    }
+  });
+
+  // Fetch departments dynamically
+  const { data: departments = [] } = useDepartments();
+
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -78,7 +99,9 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
       confirmPassword: "",
       phoneNumber: "",
       department: "",
+      division: "",
       roleId: 0,
+      companyId: undefined,
       cnic: "",
     },
   });
@@ -124,24 +147,28 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Register New Employee</CardTitle>
+    <Card className="w-full max-w-4xl mx-auto">
+      <CardHeader className="space-y-1 border-b pb-4">
+        <CardTitle className="text-2xl font-semibold">Edit Employee</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
               <FormField
                 control={form.control}
                 name="fullName"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Full Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="Enter full name" {...field} />
+                      <Input
+                        placeholder="Enter full name"
+                        {...field}
+                        className="h-10 px-3 rounded-md border"
+                      />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -150,12 +177,16 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="email"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email ID</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Email ID</FormLabel>
                     <FormControl>
-                      <Input placeholder="example@parazelsus.pk" {...field} />
+                      <Input
+                        placeholder="example@parazelsus.pk"
+                        {...field}
+                        className="h-10 px-3 rounded-md border"
+                      />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -164,17 +195,18 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="phoneNumber"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone Number</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Phone Number</FormLabel>
                     <FormControl>
                       <Input
                         placeholder="e.g. 0300-1234567"
                         {...field}
                         value={field.value ?? ""}
                         onChange={handlePhoneChange}
+                        className="h-10 px-3 rounded-md border"
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -183,45 +215,49 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="department"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Department</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Department</FormLabel>
                     <Select
                       onValueChange={field.onChange}
                       defaultValue={field.value}
                     >
                       <FormControl>
-                        <SelectTrigger>
+                        <SelectTrigger className="h-10 px-3 rounded-md border">
                           <SelectValue placeholder="Select Department" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {departmentOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
+                        {departments.map((dept) => (
+                          <SelectItem
+                            key={dept.id}
+                            value={dept.name}
+                            className="cursor-pointer hover:bg-gray-100"
+                          >
+                            {dept.name}{dept.description ? ` — ${dept.description}` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
 
               <FormField
                 control={form.control}
-                name="cnic"
+                name="division"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>CNIC</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Division <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="e.g. 42201-1234567-8"
+                        placeholder="e.g. Sales Division"
                         {...field}
                         value={field.value ?? ""}
-                        onChange={handleCnicChange}
+                        className="h-10 px-3 rounded-md border"
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -230,26 +266,82 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="roleId"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Role</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Role</FormLabel>
                     <Select
                       onValueChange={(value) => field.onChange(parseInt(value))}
-                      value={field.value?.toString() || undefined}
+                      defaultValue={field.value?.toString()}
                     >
                       <FormControl>
-                        <SelectTrigger>
+                        <SelectTrigger className="h-10 px-3 rounded-md border">
                           <SelectValue placeholder="Select Role" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {roles?.map((role: Role) => (
-                          <SelectItem key={role.id} value={role.id.toString()}>
+                        {roles?.map((role) => (
+                          <SelectItem
+                            key={role.id}
+                            value={role.id.toString()}
+                            className="cursor-pointer hover:bg-gray-100"
+                          >
                             {role.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="companyId"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Company</FormLabel>
+                    <Select
+                      onValueChange={(value) => field.onChange(parseInt(value))}
+                      defaultValue={field.value?.toString()}
+                    >
+                      <FormControl>
+                        <SelectTrigger className="h-10 px-3 rounded-md border">
+                          <SelectValue placeholder="Select Company" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {companies?.filter(c => c.active !== false).map((company) => (
+                          <SelectItem
+                            key={company.id}
+                            value={company.id.toString()}
+                            className="cursor-pointer hover:bg-gray-100"
+                          >
+                            {company.name} {company.shortName ? `(${company.shortName})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-sm text-red-500" />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="cnic"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">CNIC</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="e.g. 42201-1234567-9"
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={handleCnicChange}
+                        className="h-10 px-3 rounded-md border"
+                      />
+                    </FormControl>
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -258,12 +350,17 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="password"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Password</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="Create a password" {...field} />
+                      <Input
+                        type="password"
+                        placeholder="Enter password"
+                        {...field}
+                        className="h-10 px-3 rounded-md border"
+                      />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
@@ -272,35 +369,37 @@ export function EmployeeForm({ onSuccess }: EmployeeFormProps) {
                 control={form.control}
                 name="confirmPassword"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Confirm Password</FormLabel>
+                  <FormItem className="flex flex-col space-y-1.5">
+                    <FormLabel className="font-semibold">Confirm Password</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="Confirm password" {...field} />
+                      <Input
+                        type="password"
+                        placeholder="Confirm password"
+                        {...field}
+                        className="h-10 px-3 rounded-md border"
+                      />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-sm text-red-500" />
                   </FormItem>
                 )}
               />
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end space-x-4 pt-4 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => form.reset()}
+                className="px-6"
+              >
+                Cancel
+              </Button>
               <Button
                 type="submit"
-                className="bg-primary hover:bg-primary-dark"
                 disabled={createUserMutation.isPending}
+                className="px-6 bg-primary text-white hover:bg-primary/90"
               >
-                {createUserMutation.isPending ? (
-                  <>
-                    <span className="mr-2 animate-spin">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
-                        <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-                      </svg>
-                    </span>
-                    Registering...
-                  </>
-                ) : (
-                  <>Register Employee</>
-                )}
+                {createUserMutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </div>
           </form>

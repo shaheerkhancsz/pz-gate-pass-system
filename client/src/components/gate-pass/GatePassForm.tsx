@@ -3,7 +3,7 @@ import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLocation } from "wouter";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,22 @@ import { DriverSelection } from "./DriverSelection";
 import { DocumentPanel } from "@/components/documents";
 import { useKeyboardShortcuts, commonShortcuts } from '@/hooks/use-keyboard-shortcuts';
 
+// Gate interface (for gate selector)
+interface GateOption {
+  id: number;
+  name: string;
+  plantId?: number | null;
+  companyId: number;
+  active: boolean;
+}
+
+// Gate pass type options
+const GATE_PASS_TYPES = [
+  { value: "outward",    label: "Outward",    description: "Goods leaving the premises" },
+  { value: "inward",     label: "Inward",     description: "Goods entering the premises" },
+  { value: "returnable", label: "Returnable", description: "Goods leaving but expected to return" },
+] as const;
+
 // Define a consistent item type
 type ItemType = {
   name: string;
@@ -40,10 +56,11 @@ const itemSchema = z.object({
 // Form schema
 const formSchema = gatePassWithItemsSchema.extend({
   date: z.string().min(1, "Date is required"),
-  customerName: z.string().min(1, "Customer name is required"),
+  type: z.enum(["outward", "inward", "returnable"]).default("outward"),
+  customerName: z.string().min(1, "Name is required"),
   customerPhone: z.string().optional(),
   customerId: z.number().optional().nullable(),
-  deliveryAddress: z.string().min(1, "Delivery address is required"),
+  deliveryAddress: z.string().min(1, "Address is required"),
   driverName: z.string().min(1, "Driver name is required"),
   driverMobile: z.string()
     .regex(PHONE_REGEX, PHONE_ERROR)
@@ -60,6 +77,9 @@ const formSchema = gatePassWithItemsSchema.extend({
   createdBy: z.string(),
   createdById: z.number(),
   status: z.string().default("pending"),
+  expectedReturnDate: z.string().optional().nullable(),
+  actualReturnDate: z.string().optional().nullable(),
+  gateId: z.number().optional().nullable(),
   items: z.array(z.object({
     name: z.string().min(1, "Item name is required"),
     sku: z.string().min(1, "SKU is required"),
@@ -76,7 +96,7 @@ interface GatePassResponse {
 }
 
 export function GatePassForm() {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -102,22 +122,25 @@ export function GatePassForm() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       date: todayISO,
+      type: "outward",
       customerName: "",
-      customerPhone: "", // Added customer phone field
+      customerPhone: "",
       deliveryAddress: "",
       driverName: "",
       driverMobile: "",
       driverCnic: "",
       deliveryVanNumber: "",
-      department: "Warehouse", // Default to Warehouse instead of empty string
-      notes: "", // Added notes field
+      department: isAdmin ? "" : user?.department || "",
+      notes: "",
       createdBy: user?.fullName || "",
       createdById: user?.id || 0,
       status: "pending",
       items: [{ name: "", sku: "", quantity: 1 }],
-      // Add these fields for customer and driver IDs
       customerId: undefined,
       driverId: undefined,
+      expectedReturnDate: undefined,
+      actualReturnDate: undefined,
+      gateId: undefined,
     },
   });
 
@@ -125,6 +148,18 @@ export function GatePassForm() {
     name: "items",
     control: form.control,
   });
+
+  // Fetch gates for the current user's company
+  const { data: allGates = [] } = useQuery<GateOption[]>({
+    queryKey: ["gates", user?.companyId],
+    queryFn: () =>
+      fetch(`/api/gates?companyId=${user?.companyId}`, { credentials: "include" }).then(r => r.json()),
+    enabled: !!user?.companyId,
+  });
+  const gatesForCompany = allGates.filter(g => g.active);
+
+  // Watch type to drive conditional field labels and extra fields
+  const passType = form.watch("type");
 
   // Handle general submission
   const createGatePassMutation = useMutation({
@@ -491,6 +526,38 @@ export function GatePassForm() {
       <CardContent className="p-6">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+            {/* Pass Type Selector */}
+            <div>
+              <h3 className="text-lg font-medium mb-3 pb-2 border-b border-neutral-medium">Gate Pass Type</h3>
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex flex-wrap gap-3">
+                      {GATE_PASS_TYPES.map((t) => (
+                        <button
+                          key={t.value}
+                          type="button"
+                          onClick={() => field.onChange(t.value)}
+                          className={cn(
+                            "flex-1 min-w-[140px] px-4 py-3 rounded-lg border-2 text-left transition-all",
+                            field.value === t.value
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-neutral-medium bg-white hover:border-primary/50"
+                          )}
+                        >
+                          <div className="font-medium text-sm">{t.label}</div>
+                          <div className="text-xs text-neutral-gray mt-0.5">{t.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             {/* Basic Information Section */}
             <div>
               <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">Basic Information</h3>
@@ -532,45 +599,112 @@ export function GatePassForm() {
                     )}
                   />
 
+                  {/* Expected Return Date — only for returnable passes */}
+                  {passType === "returnable" && (
+                    <FormField
+                      control={form.control}
+                      name="expectedReturnDate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm sm:text-base">
+                            Expected Return Date <span className="text-red-500">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type="date"
+                              min={todayISO}
+                              {...field}
+                              value={field.value ?? ""}
+                              onChange={(e) => field.onChange(e.target.value || null)}
+                              className="text-xs sm:text-sm h-8 sm:h-10"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
                   <FormField
                     control={form.control}
                     name="department"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-sm sm:text-base">Department</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                          defaultValue="Warehouse"
-                        >
+                        {isAdmin ? (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="Select department" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {departmentOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
                           <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select Department" />
-                            </SelectTrigger>
+                            <Input
+                              {...field}
+                              disabled
+                              value={user?.department || ""}
+                              className="bg-neutral-50"
+                            />
                           </FormControl>
-                          <SelectContent>
-                            {departmentOptions.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+
+                  {/* Gate selector — only shown when company has gates configured */}
+                  {gatesForCompany.length > 0 && (
+                    <FormField
+                      control={form.control}
+                      name="gateId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-sm sm:text-base">Gate</FormLabel>
+                          <Select
+                            value={field.value != null ? String(field.value) : ""}
+                            onValueChange={v => field.onChange(v ? Number(v) : null)}
+                          >
+                            <FormControl>
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="Select gate (optional)" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {gatesForCompany.map(g => (
+                                <SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </div>
 
                 <div className="space-y-3 sm:space-y-4">
-                  {/* Customer Selection Component */}
-                  <CustomerSelection
-                    selectedCustomer={selectedCustomer}
-                    onSelectCustomer={handleSelectCustomer}
-                    onClearCustomer={handleClearCustomer}
-                  />
-                  
-                  {/* Only show these fields if no customer is selected */}
+                  {/* Customer/Supplier Selection — hidden for inward (no customer DB for inward) */}
+                  {passType !== "inward" && (
+                    <CustomerSelection
+                      selectedCustomer={selectedCustomer}
+                      onSelectCustomer={handleSelectCustomer}
+                      onClearCustomer={handleClearCustomer}
+                    />
+                  )}
+
+                  {/* Only show manual fields if no customer is selected */}
                   {!selectedCustomer && (
                     <>
                       <FormField
@@ -578,29 +712,33 @@ export function GatePassForm() {
                         name="customerName"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-sm sm:text-base">Customer / Person Name</FormLabel>
+                            <FormLabel className="text-sm sm:text-base">
+                              {passType === "inward" ? "Supplier Name" : "Customer / Person Name"}
+                            </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="Enter customer name" 
-                                {...field} 
-                                className="text-xs sm:text-sm h-8 sm:h-10" 
+                              <Input
+                                placeholder={passType === "inward" ? "Enter supplier name" : "Enter customer name"}
+                                {...field}
+                                className="text-xs sm:text-sm h-8 sm:h-10"
                               />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="customerPhone"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-sm sm:text-base">Customer Phone Number</FormLabel>
+                            <FormLabel className="text-sm sm:text-base">
+                              {passType === "inward" ? "Supplier Phone" : "Customer Phone Number"}
+                            </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="e.g. 0300-1234567" 
-                                {...field} 
+                              <Input
+                                placeholder="e.g. 0300-1234567"
+                                {...field}
                                 className="text-xs sm:text-sm h-8 sm:h-10"
                                 onChange={(e) => {
                                   const formattedPhone = formatPhoneNumber(e.target.value);
@@ -620,10 +758,12 @@ export function GatePassForm() {
                     name="deliveryAddress"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Delivery Address</FormLabel>
+                        <FormLabel>
+                          {passType === "inward" ? "Source / Pickup Address" : "Delivery Address"}
+                        </FormLabel>
                         <FormControl>
                           <Textarea
-                            placeholder="Enter delivery address"
+                            placeholder={passType === "inward" ? "Enter source address" : "Enter delivery address"}
                             className="resize-none"
                             {...field}
                           />
@@ -796,7 +936,7 @@ export function GatePassForm() {
             {/* Driver & Delivery Details Section */}
             <div>
               <h3 className="text-lg font-medium mb-4 pb-2 border-b border-neutral-medium">
-                Driver & Delivery Details
+                {passType === "inward" ? "Carrier & Vehicle Details" : "Driver & Delivery Details"}
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 <div className="space-y-3 sm:space-y-4">
@@ -815,11 +955,13 @@ export function GatePassForm() {
                         name="driverName"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-sm sm:text-base">Driver Name</FormLabel>
+                            <FormLabel className="text-sm sm:text-base">
+                              {passType === "inward" ? "Carrier / Driver Name" : "Driver Name"}
+                            </FormLabel>
                             <FormControl>
-                              <Input 
-                                placeholder="Enter driver name" 
-                                {...field} 
+                              <Input
+                                placeholder={passType === "inward" ? "Enter carrier name" : "Enter driver name"}
+                                {...field}
                                 className="text-xs sm:text-sm h-8 sm:h-10"
                               />
                             </FormControl>
