@@ -7,7 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { GatePass, Item } from "@shared/schema";
-import { departmentOptions, formatDate } from "@/lib/utils";
+import { useDepartments } from "@/hooks/use-departments";
+import { formatDate } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 // Import this way to properly load the autoTable plugin
@@ -25,7 +26,7 @@ interface ReportFilters {
   itemName: string;
   status: string;
   createdBy: string;
-  vehicleNumber: string; 
+  vehicleNumber: string;
   sortBy: string;
   sortOrder: string;
   limit: number;
@@ -34,6 +35,7 @@ interface ReportFilters {
 export function ReportsPanel() {
   const tableRef = useRef<HTMLTableElement>(null);
   const isMobile = useIsMobile();
+  const { data: departments = [] } = useDepartments();
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedColumns, setSelectedColumns] = useState({
     gatePassNumber: true,
@@ -50,7 +52,7 @@ export function ReportsPanel() {
     customerPhone: false,
     deliveryAddress: false
   });
-  
+
   const [filters, setFilters] = useState<ReportFilters>({
     dateFrom: "",
     dateTo: "",
@@ -69,13 +71,13 @@ export function ReportsPanel() {
   // Build query parameters from filters
   const getQueryString = () => {
     const queryParams = new URLSearchParams();
-    
+
     Object.entries(filters).forEach(([key, value]) => {
       if (value) {
         queryParams.append(key, value);
       }
     });
-    
+
     return queryParams.toString();
   };
 
@@ -90,10 +92,10 @@ export function ReportsPanel() {
       return response.json();
     }
   });
-  
+
   // State to hold the selected gate pass for displaying detailed information
   const [selectedGatePass, setSelectedGatePass] = useState<(GatePass & { items: Item[] }) | null>(null);
-  
+
   // Load all gate passes initially
   useEffect(() => {
     refetch();
@@ -120,7 +122,7 @@ export function ReportsPanel() {
 
     // Create workbook
     const workbook = XLSX.utils.book_new();
-    
+
     // Create main gate passes worksheet
     const mainWorksheet = XLSX.utils.json_to_sheet(
       gatePasses.map(pass => ({
@@ -142,7 +144,7 @@ export function ReportsPanel() {
 
     // Add main worksheet
     XLSX.utils.book_append_sheet(workbook, mainWorksheet, "Gate Passes");
-    
+
     // Create items worksheet with reference to gate pass numbers
     const itemsData: any[] = [];
     gatePasses.forEach(pass => {
@@ -159,12 +161,12 @@ export function ReportsPanel() {
         });
       }
     });
-    
+
     if (itemsData.length > 0) {
       const itemsWorksheet = XLSX.utils.json_to_sheet(itemsData);
       XLSX.utils.book_append_sheet(workbook, itemsWorksheet, "Items");
     }
-    
+
     // Generate Excel file
     XLSX.writeFile(workbook, `GatePass_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
@@ -175,15 +177,15 @@ export function ReportsPanel() {
 
     // Create PDF document
     const doc = new jsPDF();
-    
+
     // Add title
     doc.setFontSize(18);
     doc.text("Gate Pass Report", 14, 22);
-    
+
     // Add report info
     doc.setFontSize(11);
     doc.text(`Generated on: ${formatDate(new Date())}`, 14, 30);
-    
+
     // Add filters applied
     let filterText = "Filters: ";
     if (filters.dateFrom) filterText += `From ${filters.dateFrom} `;
@@ -192,9 +194,9 @@ export function ReportsPanel() {
     if (filters.customerName) filterText += `Customer: ${filters.customerName} `;
     if (filters.driverName) filterText += `Driver: ${filters.driverName} `;
     if (filters.itemName) filterText += `Item: ${filters.itemName} `;
-    
+
     doc.text(filterText, 14, 38);
-    
+
     // Create main gate passes table
     const tableColumn = ["Gate Pass No.", "Date", "Customer", "Department", "Driver Name", "Status"];
     const tableRows = gatePasses.map(pass => [
@@ -205,7 +207,7 @@ export function ReportsPanel() {
       pass.driverName,
       pass.status,
     ]);
-    
+
     // @ts-ignore - jsPDF autotable types are not fully compatible
     autoTable(doc, {
       head: [tableColumn],
@@ -216,27 +218,27 @@ export function ReportsPanel() {
       headStyles: { fillColor: [63, 81, 181], textColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: [245, 245, 245] },
     });
-    
+
     // Add detailed information for each gate pass
     let yPosition = (doc as any).lastAutoTable.finalY + 15;
-    
+
     gatePasses.forEach((pass, index) => {
       // Check if we need a new page
       if (yPosition > 250) {
         doc.addPage();
         yPosition = 20;
       }
-      
+
       // Gate pass header
       doc.setFontSize(12);
       doc.setTextColor(63, 81, 181);
       doc.text(`Gate Pass: ${pass.gatePassNumber}`, 14, yPosition);
       yPosition += 8;
-      
+
       // Gate pass details
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      
+
       const detailsTable = [
         ["Customer", pass.customerName],
         ["Phone", pass.customerPhone || "-"],
@@ -249,7 +251,7 @@ export function ReportsPanel() {
         ["Date", formatDate(pass.date)],
         ["Created By", pass.createdBy]
       ];
-      
+
       // @ts-ignore
       autoTable(doc, {
         body: detailsTable,
@@ -259,10 +261,10 @@ export function ReportsPanel() {
         columnStyles: { 0: { fontStyle: 'bold', cellWidth: 40 } },
         margin: { left: 20 },
       });
-      
+
       // Update Y position
       yPosition = (doc as any).lastAutoTable.finalY + 10;
-      
+
       // Add items table if available
       if (pass.items && pass.items.length > 0) {
         // Check if we need a new page
@@ -270,12 +272,12 @@ export function ReportsPanel() {
           doc.addPage();
           yPosition = 20;
         }
-        
+
         doc.setFontSize(10);
         doc.setTextColor(63, 81, 181);
         doc.text(`Items for Gate Pass: ${pass.gatePassNumber}`, 14, yPosition);
         yPosition += 6;
-        
+
         // Items table
         const itemsColumn = ["Item Name", "SKU", "Quantity"];
         const itemsRows = pass.items.map(item => [
@@ -283,7 +285,7 @@ export function ReportsPanel() {
           item.sku,
           item.quantity.toString(),
         ]);
-        
+
         // @ts-ignore
         autoTable(doc, {
           head: [itemsColumn],
@@ -294,20 +296,20 @@ export function ReportsPanel() {
           headStyles: { fillColor: [100, 100, 100], textColor: [255, 255, 255] },
           margin: { left: 20 },
         });
-        
+
         // Update Y position
         yPosition = (doc as any).lastAutoTable.finalY + 20;
       } else {
         yPosition += 10;
       }
-      
+
       // Add separator between gate passes (except for the last one)
       if (index < gatePasses.length - 1) {
         doc.setDrawColor(200, 200, 200);
         doc.line(14, yPosition - 10, 196, yPosition - 10);
       }
     });
-    
+
     // Save PDF
     doc.save(`GatePass_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -330,7 +332,7 @@ export function ReportsPanel() {
               className="mt-1"
             />
           </div>
-          
+
           <div>
             <Label htmlFor="dateTo">To Date</Label>
             <Input
@@ -341,7 +343,7 @@ export function ReportsPanel() {
               className="mt-1"
             />
           </div>
-          
+
           <div>
             <Label htmlFor="department">Department</Label>
             <Select
@@ -353,15 +355,15 @@ export function ReportsPanel() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Departments</SelectItem>
-                {departmentOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
+                {departments.map((dept) => (
+                  <SelectItem key={dept.id} value={dept.name}>
+                    {dept.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          
+
           <div>
             <Label htmlFor="customerName">Customer Name</Label>
             <Input
@@ -372,7 +374,7 @@ export function ReportsPanel() {
               className="mt-1"
             />
           </div>
-          
+
           <div>
             <Label htmlFor="driverName">Driver Name</Label>
             <Input
@@ -383,7 +385,7 @@ export function ReportsPanel() {
               className="mt-1"
             />
           </div>
-          
+
           <div>
             <Label htmlFor="itemName">Item Name</Label>
             <Input
@@ -395,11 +397,11 @@ export function ReportsPanel() {
             />
           </div>
         </div>
-        
+
         {/* Advanced Filters Toggle */}
         <div className="mb-6">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
             className="text-sm"
           >
@@ -407,7 +409,7 @@ export function ReportsPanel() {
             {showAdvancedFilters ? "Hide Advanced Options" : "Show Advanced Options"}
           </Button>
         </div>
-        
+
         {/* Advanced Filters */}
         {showAdvancedFilters && (
           <div className="mb-6">
@@ -434,7 +436,7 @@ export function ReportsPanel() {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div>
                       <Label htmlFor="createdBy">Created By</Label>
                       <Input
@@ -445,7 +447,7 @@ export function ReportsPanel() {
                         className="mt-1"
                       />
                     </div>
-                    
+
                     <div>
                       <Label htmlFor="vehicleNumber">Vehicle Number</Label>
                       <Input
@@ -456,7 +458,7 @@ export function ReportsPanel() {
                         className="mt-1"
                       />
                     </div>
-                    
+
                     <div>
                       <Label htmlFor="sortBy">Sort By</Label>
                       <Select
@@ -476,7 +478,7 @@ export function ReportsPanel() {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div>
                       <Label htmlFor="sortOrder">Sort Order</Label>
                       <Select
@@ -492,7 +494,7 @@ export function ReportsPanel() {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div>
                       <Label htmlFor="limit">Limit Results</Label>
                       <Select
@@ -515,138 +517,138 @@ export function ReportsPanel() {
                   </div>
                 </AccordionContent>
               </AccordionItem>
-              
+
               <AccordionItem value="column-selection">
                 <AccordionTrigger className="py-3 text-sm font-medium">Column Selection</AccordionTrigger>
                 <AccordionContent>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-4">
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-gatepass" 
+                      <Checkbox
+                        id="col-gatepass"
                         checked={selectedColumns.gatePassNumber}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, gatePassNumber: !selectedColumns.gatePassNumber})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, gatePassNumber: !selectedColumns.gatePassNumber })
                         }
                       />
                       <Label htmlFor="col-gatepass" className="text-sm">Gate Pass Number</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-date" 
+                      <Checkbox
+                        id="col-date"
                         checked={selectedColumns.date}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, date: !selectedColumns.date})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, date: !selectedColumns.date })
                         }
                       />
                       <Label htmlFor="col-date" className="text-sm">Date</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-customer" 
+                      <Checkbox
+                        id="col-customer"
                         checked={selectedColumns.customer}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, customer: !selectedColumns.customer})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, customer: !selectedColumns.customer })
                         }
                       />
                       <Label htmlFor="col-customer" className="text-sm">Customer</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-department" 
+                      <Checkbox
+                        id="col-department"
                         checked={selectedColumns.department}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, department: !selectedColumns.department})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, department: !selectedColumns.department })
                         }
                       />
                       <Label htmlFor="col-department" className="text-sm">Department</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-driver" 
+                      <Checkbox
+                        id="col-driver"
                         checked={selectedColumns.driver}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, driver: !selectedColumns.driver})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, driver: !selectedColumns.driver })
                         }
                       />
                       <Label htmlFor="col-driver" className="text-sm">Driver</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-status" 
+                      <Checkbox
+                        id="col-status"
                         checked={selectedColumns.status}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, status: !selectedColumns.status})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, status: !selectedColumns.status })
                         }
                       />
                       <Label htmlFor="col-status" className="text-sm">Status</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-created-by" 
+                      <Checkbox
+                        id="col-created-by"
                         checked={selectedColumns.createdBy}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, createdBy: !selectedColumns.createdBy})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, createdBy: !selectedColumns.createdBy })
                         }
                       />
                       <Label htmlFor="col-created-by" className="text-sm">Created By</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-items" 
+                      <Checkbox
+                        id="col-items"
                         checked={selectedColumns.items}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, items: !selectedColumns.items})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, items: !selectedColumns.items })
                         }
                       />
                       <Label htmlFor="col-items" className="text-sm">Items</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-vehicle" 
+                      <Checkbox
+                        id="col-vehicle"
                         checked={selectedColumns.vehicle}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, vehicle: !selectedColumns.vehicle})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, vehicle: !selectedColumns.vehicle })
                         }
                       />
                       <Label htmlFor="col-vehicle" className="text-sm">Vehicle</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-notes" 
+                      <Checkbox
+                        id="col-notes"
                         checked={selectedColumns.notes}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, notes: !selectedColumns.notes})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, notes: !selectedColumns.notes })
                         }
                       />
                       <Label htmlFor="col-notes" className="text-sm">Notes</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-driver-mobile" 
+                      <Checkbox
+                        id="col-driver-mobile"
                         checked={selectedColumns.driverMobile}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, driverMobile: !selectedColumns.driverMobile})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, driverMobile: !selectedColumns.driverMobile })
                         }
                       />
                       <Label htmlFor="col-driver-mobile" className="text-sm">Driver Mobile</Label>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="col-customer-phone" 
+                      <Checkbox
+                        id="col-customer-phone"
                         checked={selectedColumns.customerPhone}
-                        onCheckedChange={() => 
-                          setSelectedColumns({...selectedColumns, customerPhone: !selectedColumns.customerPhone})
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, customerPhone: !selectedColumns.customerPhone })
                         }
                       />
                       <Label htmlFor="col-customer-phone" className="text-sm">Customer Phone</Label>
@@ -657,7 +659,7 @@ export function ReportsPanel() {
             </Accordion>
           </div>
         )}
-        
+
         {/* Applied Filters */}
         <div className="flex flex-wrap gap-2 mb-4">
           {Object.entries(filters).map(([key, value]) => {
@@ -665,7 +667,7 @@ export function ReportsPanel() {
               return (
                 <Badge key={key} variant="outline" className="gap-1 px-2 py-1">
                   <span className="text-xs capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}: {value}</span>
-                  <button 
+                  <button
                     className="text-xs ml-1 hover:text-destructive"
                     onClick={() => handleFilterChange(key as keyof ReportFilters, '')}
                   >
@@ -677,7 +679,7 @@ export function ReportsPanel() {
             return null;
           })}
         </div>
-        
+
         <div className="flex flex-col md:flex-row md:justify-between gap-4 mb-6">
           <div className="flex flex-wrap gap-2">
             <Button
@@ -688,7 +690,7 @@ export function ReportsPanel() {
               <span className="material-icons mr-2 text-sm">filter_list</span>
               {isMobile ? "Apply" : "Apply Filters"}
             </Button>
-            
+
             <Button
               variant="outline"
               onClick={() => {
@@ -714,7 +716,7 @@ export function ReportsPanel() {
               {isMobile ? "Reset" : "Reset Filters"}
             </Button>
           </div>
-          
+
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -725,7 +727,7 @@ export function ReportsPanel() {
               <span className="material-icons mr-2 text-sm">description</span>
               {isMobile ? "Excel" : "Export to Excel"}
             </Button>
-            
+
             <Button
               variant="outline"
               onClick={exportToPDF}
@@ -737,7 +739,7 @@ export function ReportsPanel() {
             </Button>
           </div>
         </div>
-        
+
         {isLoading ? (
           <div className="text-center py-10">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
@@ -793,7 +795,7 @@ export function ReportsPanel() {
                 {gatePasses && gatePasses.length > 0 ? (
                   gatePasses.map((pass) => (
                     <React.Fragment key={pass.id}>
-                      <tr 
+                      <tr
                         className="hover:bg-neutral-lightest cursor-pointer"
                         onClick={() => setSelectedGatePass(selectedGatePass?.id === pass.id ? null : pass)}
                       >
@@ -823,15 +825,14 @@ export function ReportsPanel() {
                         )}
                         {selectedColumns.status && (
                           <td className="px-6 py-4 text-sm">
-                            <span className={`px-2 py-1 text-xs rounded-full ${
-                              pass.status === "completed" 
-                                ? "bg-success bg-opacity-10 text-success" 
-                                : pass.status === "pending" 
-                                  ? "bg-warning bg-opacity-10 text-warning" 
+                            <span className={`px-2 py-1 text-xs rounded-full ${pass.status === "completed"
+                                ? "bg-success bg-opacity-10 text-success"
+                                : pass.status === "pending"
+                                  ? "bg-warning bg-opacity-10 text-warning"
                                   : pass.status === "approved"
                                     ? "bg-info bg-opacity-10 text-info"
                                     : "bg-error bg-opacity-10 text-error"
-                            }`}>
+                              }`}>
                               {pass.status.charAt(0).toUpperCase() + pass.status.slice(1)}
                             </span>
                           </td>
@@ -841,8 +842,8 @@ export function ReportsPanel() {
                         )}
                         {selectedColumns.items && (
                           <td className="px-6 py-4 text-sm text-neutral-dark">
-                            {pass.items && pass.items.length > 0 
-                              ? `${pass.items.length} item${pass.items.length > 1 ? 's' : ''}` 
+                            {pass.items && pass.items.length > 0
+                              ? `${pass.items.length} item${pass.items.length > 1 ? 's' : ''}`
                               : "-"}
                           </td>
                         )}
@@ -853,12 +854,12 @@ export function ReportsPanel() {
                           <td className="px-6 py-4 text-sm text-neutral-dark">{pass.deliveryAddress || "-"}</td>
                         )}
                       </tr>
-                      
+
                       {/* Expanded row with detailed information */}
                       {selectedGatePass?.id === pass.id && (
                         <tr>
-                          <td colSpan={Object.values(selectedColumns).filter(Boolean).length} 
-                              className="px-6 py-4 bg-slate-50 border-t border-b border-slate-200">
+                          <td colSpan={Object.values(selectedColumns).filter(Boolean).length}
+                            className="px-6 py-4 bg-slate-50 border-t border-b border-slate-200">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                               {/* Gate Pass Details */}
                               <div className="space-y-2">
@@ -914,7 +915,7 @@ export function ReportsPanel() {
                                   )}
                                 </div>
                               </div>
-                              
+
                               {/* Driver Details */}
                               <div className="space-y-2">
                                 <h4 className="font-medium text-primary text-sm mb-2">Driver Details</h4>
@@ -933,7 +934,7 @@ export function ReportsPanel() {
                                   )}
                                   <span className="text-gray-600">CNIC:</span>
                                   <span>{pass.driverCnic || "-"}</span>
-                                  
+
                                   {!selectedColumns.vehicle && (
                                     <>
                                       <span className="text-gray-600">Vehicle Number:</span>
@@ -943,7 +944,7 @@ export function ReportsPanel() {
                                 </div>
                               </div>
                             </div>
-                            
+
                             {/* Items Table */}
                             {!selectedColumns.items && pass.items && pass.items.length > 0 ? (
                               <div>
@@ -982,29 +983,29 @@ export function ReportsPanel() {
                                 <div className="text-sm text-gray-500 italic">No items found for this gate pass</div>
                               )
                             )}
-                            
+
                             {/* Additional actions */}
                             <div className="mt-4 flex flex-wrap gap-2">
-                              <Button 
-                                variant="outline" 
+                              <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => window.open(`/print-gate-pass/${pass.id}`, '_blank')}
                               >
                                 <span className="material-icons text-sm mr-2">print</span>
                                 Print Gate Pass
                               </Button>
-                              
-                              <Button 
-                                variant="outline" 
+
+                              <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => window.open(`/view-gate-pass/${pass.id}`, '_blank')}
                               >
                                 <span className="material-icons text-sm mr-2">visibility</span>
                                 View Details
                               </Button>
-                              
-                              <Button 
-                                variant="outline" 
+
+                              <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => window.open(`/edit-gate-pass/${pass.id}`, '_blank')}
                               >
@@ -1019,15 +1020,15 @@ export function ReportsPanel() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={Object.values(selectedColumns).filter(Boolean).length || 1} 
-                        className="px-6 py-10 text-center text-sm text-neutral-gray">
+                    <td colSpan={Object.values(selectedColumns).filter(Boolean).length || 1}
+                      className="px-6 py-10 text-center text-sm text-neutral-gray">
                       No gate passes found matching your criteria.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
-            
+
             {gatePasses && gatePasses.length > 0 && (
               <div className="mt-4 text-sm text-neutral-gray text-right">
                 Total: {gatePasses.length} gate passes

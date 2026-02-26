@@ -134,8 +134,8 @@ export function Sidebar() {
             </li>
           )}
           
-          {/* QR Scanner - Only visible if user can verify gate passes */}
-          {canVerifyGatePass() && (
+          {/* QR Scanner - Only visible if user can read qrScanner */}
+          {canRead('qrScanner') && (
             <li>
               <Link href="/verify-gate-pass">
                 <div className={cn(
@@ -182,38 +182,56 @@ export function Sidebar() {
             </li>
           )}
           
-          {/* Admin Panel and Company Settings - Only for admins */}
-          {isAdmin && (
-            <>
-              <li>
-                <Link href="/admin">
-                  <div className={cn(
-                    "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
-                    isActive("/admin") && "bg-primary-dark",
-                    collapsed && "justify-center px-2"
-                  )}>
-                    <span className="material-icons w-6">admin_panel_settings</span>
-                    {!collapsed && <span className="ml-3 truncate">Admin Panel</span>}
-                  </div>
-                </Link>
-              </li>
-              <li>
-                <Link href="/company-settings">
-                  <div className={cn(
-                    "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
-                    isActive("/company-settings") && "bg-primary-dark",
-                    collapsed && "justify-center px-2"
-                  )}>
-                    <span className="material-icons w-6">business</span>
-                    {!collapsed && <span className="ml-3 truncate">Company Settings</span>}
-                  </div>
-                </Link>
-              </li>
-            </>
+          {/* Documents - Only visible if user can read documents */}
+          {canRead('document') && (
+            <li>
+              <Link href="/documents">
+                <div className={cn(
+                  "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
+                  isActive("/documents") && "bg-primary-dark",
+                  collapsed && "justify-center px-2"
+                )}>
+                  <span className="material-icons w-6">description</span>
+                  {!collapsed && <span className="ml-3 truncate">Documents</span>}
+                </div>
+              </Link>
+            </li>
           )}
           
-          {/* Activity Logs - Check permission instead of admin-only */}
-          {canViewActivityLogs() && (
+          {/* Admin Panel - Only for admins */}
+          {isAdmin && (
+            <li>
+              <Link href="/admin">
+                <div className={cn(
+                  "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
+                  isActive("/admin") && "bg-primary-dark",
+                  collapsed && "justify-center px-2"
+                )}>
+                  <span className="material-icons w-6">admin_panel_settings</span>
+                  {!collapsed && <span className="ml-3 truncate">Admin Panel</span>}
+                </div>
+              </Link>
+            </li>
+          )}
+
+          {/* Company Settings - Only visible if user can read companySettings */}
+          {canRead('companySettings') && (
+            <li>
+              <Link href="/company-settings">
+                <div className={cn(
+                  "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
+                  isActive("/company-settings") && "bg-primary-dark",
+                  collapsed && "justify-center px-2"
+                )}>
+                  <span className="material-icons w-6">business</span>
+                  {!collapsed && <span className="ml-3 truncate">Company Settings</span>}
+                </div>
+              </Link>
+            </li>
+          )}
+          
+          {/* Activity Logs - Only visible if user can read activityLog */}
+          {canRead('activityLog') && (
             <li>
               <Link href="/activity-logs">
                 <div className={cn(
@@ -228,8 +246,8 @@ export function Sidebar() {
             </li>
           )}
           
-          {/* Notification Settings - Admin only */}
-          {isAdmin && (
+          {/* Notification Settings - Only visible if user can read notificationSettings */}
+          {canRead('notificationSettings') && (
             <li>
               <Link href="/notification-settings">
                 <div className={cn(

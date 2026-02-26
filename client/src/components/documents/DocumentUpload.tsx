@@ -39,6 +39,15 @@ export function DocumentUpload({ entityType, entityId, onSuccess }: DocumentUplo
       return;
     }
 
+    if (!entityId || !entityType) {
+      toast({
+        title: 'Error',
+        description: 'Cannot upload document: Missing entity information. Please save the record first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     // Check file size (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
       toast({
@@ -54,7 +63,7 @@ export function DocumentUpload({ entityType, entityId, onSuccess }: DocumentUplo
     try {
       // Convert file to base64
       const fileData = await readFileAsBase64(file);
-      
+
       // Create document object
       const document = {
         entityType,
@@ -80,10 +89,10 @@ export function DocumentUpload({ entityType, entityId, onSuccess }: DocumentUplo
       // Reset form
       setFile(null);
       setDescription('');
-      
+
       // Invalidate queries to refresh document list
       queryClient.invalidateQueries({ queryKey: [`/api/documents/entity/${entityType}/${entityId}`] });
-      
+
       // Call onSuccess callback
       if (onSuccess) {
         onSuccess();
@@ -127,10 +136,10 @@ export function DocumentUpload({ entityType, entityId, onSuccess }: DocumentUplo
         <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="file">File</Label>
-            <Input 
-              id="file" 
-              type="file" 
-              onChange={handleFileChange} 
+            <Input
+              id="file"
+              type="file"
+              onChange={handleFileChange}
               className="cursor-pointer"
             />
             {file && (
@@ -152,8 +161,8 @@ export function DocumentUpload({ entityType, entityId, onSuccess }: DocumentUplo
         </div>
       </CardContent>
       <CardFooter>
-        <Button 
-          onClick={handleUpload} 
+        <Button
+          onClick={handleUpload}
           disabled={!file || isUploading}
           className="w-full"
         >

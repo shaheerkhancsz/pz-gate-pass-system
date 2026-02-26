@@ -40,7 +40,26 @@ export const getStatusBadgeClass = (status: string) => {
       return "bg-warning bg-opacity-10 text-warning";
     case "rejected":
       return "bg-error bg-opacity-10 text-error";
+    case "approved":
+      return "bg-blue-100 text-blue-700";
+    case "security_allowed":
+      return "bg-purple-100 text-purple-700";
+    case "sent_back":
+      return "bg-orange-100 text-orange-700";
     default:
       return "bg-neutral-gray bg-opacity-10 text-neutral-gray";
+  }
+};
+
+// Human-readable status labels
+export const getStatusLabel = (status: string): string => {
+  switch (status.toLowerCase()) {
+    case "pending": return "Pending";
+    case "approved": return "Approved";
+    case "security_allowed": return "Security Allowed";
+    case "completed": return "Completed";
+    case "rejected": return "Rejected";
+    case "sent_back": return "Sent Back";
+    default: return status.charAt(0).toUpperCase() + status.slice(1);
   }
 };

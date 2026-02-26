@@ -23,18 +23,44 @@ export type AuthUser = Omit<User, "password" | "createdAt"> & {
 
 // Login function
 export async function login(data: LoginInput): Promise<AuthUser> {
-  const response = await apiRequest("POST", "/api/auth/login", data);
-  const user = await response.json();
-  
-  // Store user in localStorage if remember me is checked
-  if (data.rememberMe) {
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-  } else {
-    // Otherwise, store in sessionStorage which will be cleared when browser closes
-    sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+  try {
+    const response = await apiRequest("POST", "/auth/login", data);
+    const user = await response.json();
+
+    // Store user in localStorage if remember me is checked
+    if (data.rememberMe) {
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } else {
+      // Otherwise, store in sessionStorage which will be cleared when browser closes
+      sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+    }
+
+    return user;
+  } catch (error) {
+    console.error('Login error:', error);
+    throw error;
   }
-  
-  return user;
+}
+
+// AD / LDAP login function (Phase 6: Active Directory SSO)
+export async function loginWithAd(params: { companyId: number; username: string; password: string }): Promise<AuthUser> {
+  const response = await fetch("/api/auth/ad-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(params),
+  });
+
+  const user = await response.json();
+
+  if (!response.ok) {
+    throw new Error(user.message || "AD login failed");
+  }
+
+  // Store in sessionStorage (AD users don't get "remember me" — session-scoped)
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+
+  return user as AuthUser;
 }
 
 // Logout function
@@ -47,15 +73,15 @@ export function logout(): void {
 export function getCurrentUser(): AuthUser | null {
   const userFromLocal = localStorage.getItem(USER_KEY);
   const userFromSession = sessionStorage.getItem(USER_KEY);
-  
+
   if (userFromLocal) {
     return JSON.parse(userFromLocal);
   }
-  
+
   if (userFromSession) {
     return JSON.parse(userFromSession);
   }
-  
+
   return null;
 }
 
@@ -68,13 +94,13 @@ export function isAuthenticated(): boolean {
 export function isAdmin(): boolean {
   const user = getCurrentUser();
   if (!user) return false;
-  
+
   // Primary check: roleId-based (new way)
   if (user.roleId === 1) return true;
-  
+
   // Secondary check: string role (backward compatibility)
   if (user.role === "admin") return true;
-  
+
   return false;
 }
 
@@ -82,46 +108,46 @@ export function isAdmin(): boolean {
 export function hasPermission(module: string, action: string): boolean {
   const user = getCurrentUser();
   if (!user) return false;
-  
+
   // Admin has all permissions
   if (isAdmin()) return true;
-  
+
   // Normalize module name to handle inconsistencies (both singular and plural forms)
   const normalizedModule = normalizeModuleName(module);
-  
+
   // Normalize action to handle inconsistencies (view -> read, edit -> update)
   const normalizedAction = normalizeActionName(action);
-  
+
   // If user has permissions array from API, check that first
   if (user.permissions && Array.isArray(user.permissions)) {
     return user.permissions.some(
-      (p) => (normalizeModuleName(p.module) === normalizedModule) && 
-             (normalizeActionName(p.action) === normalizedAction)
+      (p) => (normalizeModuleName(p.module) === normalizedModule) &&
+        (normalizeActionName(p.action) === normalizedAction)
     );
   }
-  
+
   // Legacy role-based fallback - ensure backward compatibility
   if (user.role === "manager") {
     const managerAllowedActions = ["create", "read", "update", "approve"];
     return managerAllowedActions.includes(normalizedAction);
   }
-  
+
   if (user.role === "staff") {
     const staffAllowedActions = ["create", "read", "update"];
     const staffAllowedModules = ["gatepass", "customer", "driver"];
-    return staffAllowedActions.includes(normalizedAction) && 
-           staffAllowedModules.includes(normalizedModule);
+    return staffAllowedActions.includes(normalizedAction) &&
+      staffAllowedModules.includes(normalizedModule);
   }
-  
+
   if (user.role === "security") {
-    return (normalizedModule === "gatepass" && 
-           (normalizedAction === "read" || normalizedAction === "verify"));
+    return (normalizedModule === "gatepass" &&
+      (normalizedAction === "read" || normalizedAction === "verify"));
   }
-  
+
   if (user.role === "viewer") {
     return normalizedAction === "read";
   }
-  
+
   return false;
 }
 
@@ -144,9 +170,20 @@ function normalizeModuleName(module: string): string {
     'users': 'user',
     'setting': 'setting',
     'settings': 'setting',
-    'dashboard': 'dashboard'
+    'qrScanner': 'qrScanner',
+    'qr_scanner': 'qrScanner',
+    'qr-scanner': 'qrScanner',
+    'qrscanner': 'qrScanner',
+    'document': 'document',
+    'documents': 'document',
+    'notification': 'notification',
+    'notifications': 'notification',
+    'activityLog': 'activityLog',
+    'activity_log': 'activityLog',
+    'activity-log': 'activityLog',
+    'activitylogs': 'activityLog'
   };
-  
+
   return moduleMap[module.toLowerCase()] || module.toLowerCase();
 }
 
@@ -162,6 +199,6 @@ function normalizeActionName(action: string): string {
     'approve': 'approve',
     'verify': 'verify'
   };
-  
+
   return actionMap[action.toLowerCase()] || action.toLowerCase();
 }

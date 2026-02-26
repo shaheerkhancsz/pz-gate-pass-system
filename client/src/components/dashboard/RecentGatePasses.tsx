@@ -1,38 +1,32 @@
 import React from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { GatePass } from "@shared/schema";
 import { formatDate } from "@/lib/utils";
+import { getStatusBadgeClass, getStatusLabel } from "@/components/ui/theme";
 
 interface RecentGatePassesProps {
   limit?: number;
 }
 
 export function RecentGatePasses({ limit = 5 }: RecentGatePassesProps) {
+  const [, navigate] = useLocation();
   const { data: gatePasses, isLoading } = useQuery<GatePass[]>({
     queryKey: ["/api/gate-passes"],
   });
 
   const recentPasses = gatePasses?.slice(0, limit) || [];
 
-  const getStatusClass = (status: string) => {
-    switch (status.toLowerCase()) {
-      case "completed":
-        return "bg-success bg-opacity-10 text-success";
-      case "pending":
-        return "bg-warning bg-opacity-10 text-warning";
-      case "rejected":
-        return "bg-error bg-opacity-10 text-error";
-      default:
-        return "bg-gray-200 text-gray-600";
-    }
-  };
 
   const handlePrint = (gatePassId: number) => {
     // Open print preview in new window/tab
     window.open(`/print-gate-pass/${gatePassId}`, '_blank');
+  };
+
+  const handleView = (gatePassId: number) => {
+    navigate(`/view-gate-pass/${gatePassId}`);
   };
 
   if (isLoading) {
@@ -86,8 +80,8 @@ export function RecentGatePasses({ limit = 5 }: RecentGatePassesProps) {
                   <td className="px-6 py-4 text-sm text-neutral-dark">{pass.customerName}</td>
                   <td className="px-6 py-4 text-sm text-neutral-dark">{pass.department}</td>
                   <td className="px-6 py-4 text-sm">
-                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusClass(pass.status)}`}>
-                      {pass.status.charAt(0).toUpperCase() + pass.status.slice(1)}
+                    <span className={`px-2 py-1 text-xs rounded-full ${getStatusBadgeClass(pass.status)}`}>
+                      {getStatusLabel(pass.status)}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm">
@@ -97,6 +91,7 @@ export function RecentGatePasses({ limit = 5 }: RecentGatePassesProps) {
                         size="icon"
                         title="View"
                         className="text-info hover:text-primary h-auto w-auto p-1"
+                        onClick={() => handleView(pass.id)}
                       >
                         <span className="material-icons text-sm">visibility</span>
                       </Button>

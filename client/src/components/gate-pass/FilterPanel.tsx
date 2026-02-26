@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { departmentOptions } from "@/lib/utils";
+import { useDepartments } from "@/hooks/use-departments";
 
 // Filter schema
 const filterSchema = z.object({
@@ -16,7 +16,8 @@ const filterSchema = z.object({
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
   department: z.string().optional(),
-  status: z.string().optional()
+  status: z.string().optional(),
+  type: z.string().optional(),
 });
 
 type FilterValues = z.infer<typeof filterSchema>;
@@ -26,6 +27,7 @@ interface FilterPanelProps {
 }
 
 export function FilterPanel({ onFilter }: FilterPanelProps) {
+  const { data: departments = [] } = useDepartments();
   const form = useForm<FilterValues>({
     defaultValues: {
       gatePassNumber: "",
@@ -34,7 +36,8 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
       dateFrom: "",
       dateTo: "",
       department: "all",
-      status: "all"
+      status: "all",
+      type: "all",
     },
   });
 
@@ -50,11 +53,12 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
       dateFrom: "",
       dateTo: "",
       department: "all",
-      status: "all"
+      status: "all",
+      type: "all",
     };
-    
+
     form.reset(resetValues);
-    
+
     // Make sure to call onFilter with the reset values
     onFilter(resetValues);
   };
@@ -77,7 +81,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="customerName"
@@ -90,7 +94,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="itemName"
@@ -103,7 +107,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="dateFrom"
@@ -116,7 +120,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="dateTo"
@@ -129,7 +133,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="department"
@@ -147,9 +151,9 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="all">All Departments</SelectItem>
-                        {departmentOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
+                        {departments.map((dept) => (
+                          <SelectItem key={dept.id} value={dept.name}>
+                            {dept.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -157,7 +161,7 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="status"
@@ -176,15 +180,44 @@ export function FilterPanel({ onFilter }: FilterPanelProps) {
                       <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
                         <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="security_allowed">Security Allowed</SelectItem>
                         <SelectItem value="completed">Completed</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="sent_back">Sent Back</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Pass Type</FormLabel>
+                    <Select
+                      onValueChange={field.onChange}
+                      defaultValue={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All Types" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="outward">Outward</SelectItem>
+                        <SelectItem value="inward">Inward</SelectItem>
+                        <SelectItem value="returnable">Returnable</SelectItem>
                       </SelectContent>
                     </Select>
                   </FormItem>
                 )}
               />
             </div>
-            
+
             <div className="mt-4 flex justify-end space-x-2">
               <Button
                 type="button"

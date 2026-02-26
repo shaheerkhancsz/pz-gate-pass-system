@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { getCurrentUser, login, logout, isAdmin, hasPermission, AuthUser } from "@/lib/auth";
+import { getCurrentUser, login, loginWithAd, logout, isAdmin, hasPermission, AuthUser } from "@/lib/auth";
 import { LoginInput } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -9,6 +9,7 @@ interface AuthContextType {
   isAdmin: boolean;
   hasPermission: (module: string, action: string) => boolean;
   login: (data: LoginInput) => Promise<void>;
+  loginWithAd: (params: { companyId: number; username: string; password: string }) => Promise<void>;
   logout: () => void;
   loading: boolean;
 }
@@ -52,6 +53,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
+  const handleLoginWithAd = async (params: { companyId: number; username: string; password: string }) => {
+    try {
+      setLoading(true);
+      const user = await loginWithAd(params);
+      setUser(user);
+      toast({
+        title: "Login successful",
+        description: `Welcome, ${user.fullName}!`,
+      });
+    } catch (error) {
+      toast({
+        title: "AD Login failed",
+        description: error instanceof Error ? error.message : "Invalid credentials",
+        variant: "destructive",
+      });
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     logout();
     setUser(null);
@@ -67,6 +89,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAdmin: isAdmin(),
     hasPermission: (module: string, action: string) => hasPermission(module, action),
     login: handleLogin,
+    loginWithAd: handleLoginWithAd,
     logout: handleLogout,
     loading,
   };

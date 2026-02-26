@@ -15,7 +15,8 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
-import { departmentOptions, formatDate } from "@/lib/utils";
+import { useDepartments } from "@/hooks/use-departments";
+import { formatDate } from "@/lib/utils";
 
 // Define the form schema
 const reportFormSchema = z.object({
@@ -73,6 +74,7 @@ export function CustomReportBuilder() {
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const isMobile = useIsMobile();
+  const { data: departments = [] } = useDepartments();
 
   // Initialize form with default values
   const form = useForm<ReportFormValues>({
@@ -111,10 +113,10 @@ export function CustomReportBuilder() {
   const previewReport = async (values: ReportFormValues) => {
     try {
       setIsLoading(true);
-      
+
       // Build the query parameters
       const queryParams = new URLSearchParams();
-      
+
       // Add filters
       if (values.filters.dateRange.enabled) {
         if (values.filters.dateRange.dateFrom) {
@@ -124,45 +126,45 @@ export function CustomReportBuilder() {
           queryParams.append("dateTo", values.filters.dateRange.dateTo);
         }
       }
-      
+
       if (values.filters.customer.enabled && values.filters.customer.value) {
         queryParams.append("customerName", values.filters.customer.value);
       }
-      
+
       if (values.filters.department.enabled && values.filters.department.value) {
         queryParams.append("department", values.filters.department.value);
       }
-      
+
       if (values.filters.driver.enabled && values.filters.driver.value) {
         queryParams.append("driverName", values.filters.driver.value);
       }
-      
+
       if (values.filters.status.enabled && values.filters.status.value) {
         queryParams.append("status", values.filters.status.value);
       }
-      
+
       if (values.filters.item.enabled && values.filters.item.value) {
         queryParams.append("itemName", values.filters.item.value);
       }
-      
+
       // Add sorting
       queryParams.append("sortBy", values.sortBy);
       queryParams.append("sortOrder", values.sortOrder);
-      
+
       // Fetch data
-      const url = queryParams.toString() 
-        ? `/api/gate-passes?${queryParams.toString()}` 
+      const url = queryParams.toString()
+        ? `/api/gate-passes?${queryParams.toString()}`
         : '/api/gate-passes';
-      
+
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch gate passes');
-      
+
       const data = await response.json();
-      
+
       // Process data for preview based on selected columns
       const processedData = data.map((pass: any) => {
         const result: any = {};
-        
+
         if (values.columns.gatePassNumber) result.gatePassNumber = pass.gatePassNumber;
         if (values.columns.date) result.date = formatDate(pass.date);
         if (values.columns.customer) result.customer = pass.customerName;
@@ -174,14 +176,14 @@ export function CustomReportBuilder() {
         if (values.columns.createdAt) result.createdAt = formatDate(pass.createdAt);
         if (values.columns.notes) result.notes = pass.notes;
         if (values.columns.items) {
-          result.items = pass.items ? pass.items.map((item: any) => 
+          result.items = pass.items ? pass.items.map((item: any) =>
             `${item.name} (${item.quantity})`
           ).join(", ") : "";
         }
-        
+
         return result;
       });
-      
+
       // Group data if requested
       let finalData = processedData;
       if (values.groupBy !== "none") {
@@ -192,22 +194,22 @@ export function CustomReportBuilder() {
           if (!groups[key]) groups[key] = [];
           groups[key].push(item);
         });
-        
+
         // Convert groups to array format with headers
         finalData = [];
         Object.entries(groups).forEach(([key, items]) => {
-          finalData.push({ 
-            isGroupHeader: true, 
+          finalData.push({
+            isGroupHeader: true,
             groupName: key,
             count: items.length
           });
           finalData = [...finalData, ...items];
         });
       }
-      
+
       setPreviewData(finalData);
       setReportTab("preview");
-      
+
     } catch (error) {
       console.error("Error generating report:", error);
       toast({
@@ -225,17 +227,17 @@ export function CustomReportBuilder() {
     // Get existing templates from localStorage
     const savedTemplates = localStorage.getItem('reportTemplates');
     const templates = savedTemplates ? JSON.parse(savedTemplates) : [];
-    
+
     // Add new template
     templates.push({
       id: Date.now(),
       ...values,
       createdAt: new Date().toISOString(),
     });
-    
+
     // Save back to localStorage
     localStorage.setItem('reportTemplates', JSON.stringify(templates));
-    
+
     toast({
       title: "Report template saved",
       description: "Your report template has been saved for future use.",
@@ -245,17 +247,17 @@ export function CustomReportBuilder() {
   // Export to Excel
   const exportToExcel = () => {
     if (!previewData || previewData.length === 0) return;
-    
+
     // Filter out group headers
     const dataForExport = previewData.filter((item: any) => !item.isGroupHeader);
-    
+
     // Create workbook
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(dataForExport);
-    
+
     // Add worksheet
     XLSX.utils.book_append_sheet(workbook, worksheet, "Custom Report");
-    
+
     // Generate Excel file
     XLSX.writeFile(workbook, `Custom_Report_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
@@ -263,30 +265,30 @@ export function CustomReportBuilder() {
   // Export to PDF
   const exportToPDF = () => {
     if (!previewData || previewData.length === 0) return;
-    
+
     // Create PDF document
     const doc = new jsPDF();
-    
+
     // Add title
     const reportName = form.getValues("name") || "Custom Report";
     doc.setFontSize(18);
     doc.text(reportName, 14, 22);
-    
+
     // Add description if available
     const description = form.getValues("description");
     if (description) {
       doc.setFontSize(11);
       doc.text(description, 14, 30);
     }
-    
+
     // Add generation info
     doc.setFontSize(10);
     doc.text(`Generated on: ${formatDate(new Date())}`, 14, description ? 38 : 30);
-    
+
     // Get column headers
     const columns = form.getValues("columns");
     const tableHeaders: string[] = [];
-    
+
     if (columns.gatePassNumber) tableHeaders.push("Gate Pass No.");
     if (columns.date) tableHeaders.push("Date");
     if (columns.customer) tableHeaders.push("Customer");
@@ -298,23 +300,23 @@ export function CustomReportBuilder() {
     if (columns.createdAt) tableHeaders.push("Created At");
     if (columns.notes) tableHeaders.push("Notes");
     if (columns.items) tableHeaders.push("Items");
-    
+
     // Prepare data for table
     let startY = description ? 45 : 37;
     let currentY = startY;
     let currentGroupName = "";
-    
+
     // Loop through data and create tables (possibly with group headers)
     previewData.forEach((row: any, index) => {
       if (row.isGroupHeader) {
         // Add group header
         if (index > 0) currentY += 10; // Add space after previous content
-        
+
         if (currentY > 250) { // Check if we need a new page
           doc.addPage();
           currentY = 20;
         }
-        
+
         currentGroupName = row.groupName;
         doc.setFontSize(12);
         doc.setTextColor(63, 81, 181);
@@ -324,12 +326,12 @@ export function CustomReportBuilder() {
         // Regular data row
         // If this is the first row after a group header or a new group altogether, create a new table
         if (
-          (index > 0 && previewData[index - 1].isGroupHeader) || 
+          (index > 0 && previewData[index - 1].isGroupHeader) ||
           (index === 0 && !row.isGroupHeader) ||
           (form.getValues("groupBy") === "none" && index === 0)
         ) {
           const tableRows: any[][] = [];
-          
+
           // Collect all rows for this group
           let i = index;
           while (i < previewData.length && !previewData[i].isGroupHeader) {
@@ -345,11 +347,11 @@ export function CustomReportBuilder() {
             if (columns.createdAt) dataRow.push(previewData[i].createdAt || "");
             if (columns.notes) dataRow.push(previewData[i].notes || "");
             if (columns.items) dataRow.push(previewData[i].items || "");
-            
+
             tableRows.push(dataRow);
             i++;
           }
-          
+
           // Create table
           // @ts-ignore - jsPDF autotable types are not fully compatible
           autoTable(doc, {
@@ -361,13 +363,13 @@ export function CustomReportBuilder() {
             headStyles: { fillColor: [63, 81, 181], textColor: [255, 255, 255] },
             alternateRowStyles: { fillColor: [245, 245, 245] },
           });
-          
+
           // Update current Y position
           currentY = (doc as any).lastAutoTable.finalY + 10;
         }
       }
     });
-    
+
     // Save PDF
     doc.save(`Custom_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
@@ -378,18 +380,18 @@ export function CustomReportBuilder() {
         <CardHeader className="p-6 border-b border-neutral-medium">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <CardTitle className="font-medium">Custom Report Builder</CardTitle>
-            
+
             <TabsList className="grid grid-cols-2 w-full md:w-64">
-              <TabsTrigger 
-                value="design" 
+              <TabsTrigger
+                value="design"
                 className={reportTab === "design" ? "data-[state=active]:bg-primary data-[state=active]:text-white" : ""}
                 onClick={() => setReportTab("design")}
               >
                 <span className="material-icons text-sm mr-2">tune</span>
                 Design
               </TabsTrigger>
-              <TabsTrigger 
-                value="preview" 
+              <TabsTrigger
+                value="preview"
                 className={reportTab === "preview" ? "data-[state=active]:bg-primary data-[state=active]:text-white" : ""}
                 onClick={() => setReportTab("preview")}
                 disabled={previewData.length === 0}
@@ -401,7 +403,7 @@ export function CustomReportBuilder() {
           </div>
         </CardHeader>
       </Card>
-      
+
       <TabsContent value="design" className="m-0">
         <Card className="bg-white rounded-lg shadow-sm">
           <CardContent className="p-6">
@@ -416,9 +418,9 @@ export function CustomReportBuilder() {
                         <FormItem>
                           <FormLabel>Report Name</FormLabel>
                           <FormControl>
-                            <Input 
-                              placeholder="Enter report name" 
-                              {...field} 
+                            <Input
+                              placeholder="Enter report name"
+                              {...field}
                               className="w-full"
                             />
                           </FormControl>
@@ -426,7 +428,7 @@ export function CustomReportBuilder() {
                         </FormItem>
                       )}
                     />
-                    
+
                     <FormField
                       control={form.control}
                       name="description"
@@ -434,9 +436,9 @@ export function CustomReportBuilder() {
                         <FormItem>
                           <FormLabel>Description (Optional)</FormLabel>
                           <FormControl>
-                            <Input 
-                              placeholder="Briefly describe this report" 
-                              {...field} 
+                            <Input
+                              placeholder="Briefly describe this report"
+                              {...field}
                               className="w-full"
                             />
                           </FormControl>
@@ -444,10 +446,10 @@ export function CustomReportBuilder() {
                       )}
                     />
                   </div>
-                  
+
                   <div className="border rounded-md p-4">
                     <h3 className="font-medium mb-4">Report Filters</h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                       {/* Date Range Filter */}
                       <div className="space-y-3">
@@ -458,8 +460,8 @@ export function CustomReportBuilder() {
                             render={({ field }) => (
                               <FormItem className="flex items-center space-x-2">
                                 <FormControl>
-                                  <Checkbox 
-                                    checked={field.value} 
+                                  <Checkbox
+                                    checked={field.value}
                                     onCheckedChange={field.onChange}
                                   />
                                 </FormControl>
@@ -470,7 +472,7 @@ export function CustomReportBuilder() {
                             )}
                           />
                         </div>
-                        
+
                         {form.watch("filters.dateRange.enabled") && (
                           <div className="grid grid-cols-2 gap-2">
                             <FormField
@@ -480,16 +482,16 @@ export function CustomReportBuilder() {
                                 <FormItem>
                                   <FormLabel className="text-xs">From</FormLabel>
                                   <FormControl>
-                                    <Input 
-                                      type="date" 
-                                      {...field} 
+                                    <Input
+                                      type="date"
+                                      {...field}
                                       className="w-full"
                                     />
                                   </FormControl>
                                 </FormItem>
                               )}
                             />
-                            
+
                             <FormField
                               control={form.control}
                               name="filters.dateRange.dateTo"
@@ -497,9 +499,9 @@ export function CustomReportBuilder() {
                                 <FormItem>
                                   <FormLabel className="text-xs">To</FormLabel>
                                   <FormControl>
-                                    <Input 
-                                      type="date" 
-                                      {...field} 
+                                    <Input
+                                      type="date"
+                                      {...field}
                                       className="w-full"
                                     />
                                   </FormControl>
@@ -509,7 +511,7 @@ export function CustomReportBuilder() {
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Customer Filter */}
                       <div className="space-y-3">
                         <FormField
@@ -518,8 +520,8 @@ export function CustomReportBuilder() {
                           render={({ field }) => (
                             <FormItem className="flex items-center space-x-2">
                               <FormControl>
-                                <Checkbox 
-                                  checked={field.value} 
+                                <Checkbox
+                                  checked={field.value}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -529,7 +531,7 @@ export function CustomReportBuilder() {
                             </FormItem>
                           )}
                         />
-                        
+
                         {form.watch("filters.customer.enabled") && (
                           <FormField
                             control={form.control}
@@ -537,9 +539,9 @@ export function CustomReportBuilder() {
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input 
-                                    placeholder="Customer name" 
-                                    {...field} 
+                                  <Input
+                                    placeholder="Customer name"
+                                    {...field}
                                     className="w-full"
                                   />
                                 </FormControl>
@@ -548,7 +550,7 @@ export function CustomReportBuilder() {
                           />
                         )}
                       </div>
-                      
+
                       {/* Department Filter */}
                       <div className="space-y-3">
                         <FormField
@@ -557,8 +559,8 @@ export function CustomReportBuilder() {
                           render={({ field }) => (
                             <FormItem className="flex items-center space-x-2">
                               <FormControl>
-                                <Checkbox 
-                                  checked={field.value} 
+                                <Checkbox
+                                  checked={field.value}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -568,7 +570,7 @@ export function CustomReportBuilder() {
                             </FormItem>
                           )}
                         />
-                        
+
                         {form.watch("filters.department.enabled") && (
                           <FormField
                             control={form.control}
@@ -584,9 +586,9 @@ export function CustomReportBuilder() {
                                       <SelectValue placeholder="Select department" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {departmentOptions.map((option) => (
-                                        <SelectItem key={option.value} value={option.value}>
-                                          {option.label}
+                                      {departments.map((dept) => (
+                                        <SelectItem key={dept.id} value={dept.name}>
+                                          {dept.name}
                                         </SelectItem>
                                       ))}
                                     </SelectContent>
@@ -597,7 +599,7 @@ export function CustomReportBuilder() {
                           />
                         )}
                       </div>
-                      
+
                       {/* Driver Filter */}
                       <div className="space-y-3">
                         <FormField
@@ -606,8 +608,8 @@ export function CustomReportBuilder() {
                           render={({ field }) => (
                             <FormItem className="flex items-center space-x-2">
                               <FormControl>
-                                <Checkbox 
-                                  checked={field.value} 
+                                <Checkbox
+                                  checked={field.value}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -617,7 +619,7 @@ export function CustomReportBuilder() {
                             </FormItem>
                           )}
                         />
-                        
+
                         {form.watch("filters.driver.enabled") && (
                           <FormField
                             control={form.control}
@@ -625,9 +627,9 @@ export function CustomReportBuilder() {
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input 
-                                    placeholder="Driver name" 
-                                    {...field} 
+                                  <Input
+                                    placeholder="Driver name"
+                                    {...field}
                                     className="w-full"
                                   />
                                 </FormControl>
@@ -636,7 +638,7 @@ export function CustomReportBuilder() {
                           />
                         )}
                       </div>
-                      
+
                       {/* Status Filter */}
                       <div className="space-y-3">
                         <FormField
@@ -645,8 +647,8 @@ export function CustomReportBuilder() {
                           render={({ field }) => (
                             <FormItem className="flex items-center space-x-2">
                               <FormControl>
-                                <Checkbox 
-                                  checked={field.value} 
+                                <Checkbox
+                                  checked={field.value}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -656,7 +658,7 @@ export function CustomReportBuilder() {
                             </FormItem>
                           )}
                         />
-                        
+
                         {form.watch("filters.status.enabled") && (
                           <FormField
                             control={form.control}
@@ -684,7 +686,7 @@ export function CustomReportBuilder() {
                           />
                         )}
                       </div>
-                      
+
                       {/* Item Filter */}
                       <div className="space-y-3">
                         <FormField
@@ -693,8 +695,8 @@ export function CustomReportBuilder() {
                           render={({ field }) => (
                             <FormItem className="flex items-center space-x-2">
                               <FormControl>
-                                <Checkbox 
-                                  checked={field.value} 
+                                <Checkbox
+                                  checked={field.value}
                                   onCheckedChange={field.onChange}
                                 />
                               </FormControl>
@@ -704,7 +706,7 @@ export function CustomReportBuilder() {
                             </FormItem>
                           )}
                         />
-                        
+
                         {form.watch("filters.item.enabled") && (
                           <FormField
                             control={form.control}
@@ -712,9 +714,9 @@ export function CustomReportBuilder() {
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input 
-                                    placeholder="Item name" 
-                                    {...field} 
+                                  <Input
+                                    placeholder="Item name"
+                                    {...field}
                                     className="w-full"
                                   />
                                 </FormControl>
@@ -725,10 +727,10 @@ export function CustomReportBuilder() {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className="border rounded-md p-4">
                     <h3 className="font-medium mb-4">Columns to Display</h3>
-                    
+
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                       <FormField
                         control={form.control}
@@ -736,8 +738,8 @@ export function CustomReportBuilder() {
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -747,15 +749,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.date"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -765,15 +767,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.customer"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -783,15 +785,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.department"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -801,15 +803,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.driver"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -819,15 +821,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.vehicle"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -837,15 +839,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.items"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -855,15 +857,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.status"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -873,15 +875,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.createdBy"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -891,15 +893,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.createdAt"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -909,15 +911,15 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="columns.notes"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
-                              <Checkbox 
-                                checked={field.value} 
+                              <Checkbox
+                                checked={field.value}
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
@@ -929,10 +931,10 @@ export function CustomReportBuilder() {
                       />
                     </div>
                   </div>
-                  
+
                   <div className="border rounded-md p-4">
                     <h3 className="font-medium mb-4">Grouping &amp; Sorting</h3>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <FormField
                         control={form.control}
@@ -961,7 +963,7 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="sortBy"
@@ -988,7 +990,7 @@ export function CustomReportBuilder() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <FormField
                         control={form.control}
                         name="sortOrder"
@@ -1014,7 +1016,7 @@ export function CustomReportBuilder() {
                       />
                     </div>
                   </div>
-                  
+
                   <div className="flex justify-between mt-6">
                     <Button
                       type="button"
@@ -1024,9 +1026,9 @@ export function CustomReportBuilder() {
                       <span className="material-icons text-sm mr-2">save</span>
                       Save Template
                     </Button>
-                    
-                    <Button 
-                      type="submit" 
+
+                    <Button
+                      type="submit"
                       disabled={isLoading}
                     >
                       {isLoading ? (
@@ -1048,7 +1050,7 @@ export function CustomReportBuilder() {
           </CardContent>
         </Card>
       </TabsContent>
-      
+
       <TabsContent value="preview" className="m-0 space-y-4">
         <Card className="bg-white rounded-lg shadow-sm">
           <CardContent className="p-6">
@@ -1059,7 +1061,7 @@ export function CustomReportBuilder() {
                   <p className="text-sm text-neutral-gray">{form.getValues("description")}</p>
                 )}
               </div>
-              
+
               <div className="flex space-x-2">
                 <Button
                   variant="outline"
@@ -1070,7 +1072,7 @@ export function CustomReportBuilder() {
                   <span className="material-icons text-sm mr-2">description</span>
                   Export Excel
                 </Button>
-                
+
                 <Button
                   variant="outline"
                   size="sm"
@@ -1082,7 +1084,7 @@ export function CustomReportBuilder() {
                 </Button>
               </div>
             </div>
-            
+
             <div className="overflow-x-auto">
               <table className="w-full whitespace-nowrap">
                 <thead>
@@ -1127,8 +1129,8 @@ export function CustomReportBuilder() {
                     previewData.map((row: any, index: number) => (
                       row.isGroupHeader ? (
                         <tr key={`group-${index}`} className="bg-slate-100">
-                          <td 
-                            colSpan={12} 
+                          <td
+                            colSpan={12}
                             className="px-4 py-3 text-sm font-medium text-primary"
                           >
                             {form.watch("groupBy").charAt(0).toUpperCase() + form.watch("groupBy").slice(1)}: {row.groupName} ({row.count})
@@ -1157,15 +1159,14 @@ export function CustomReportBuilder() {
                           {form.watch("columns.status") && (
                             <td className="px-4 py-3 text-sm">
                               {row.status && (
-                                <span className={`px-2 py-1 text-xs rounded-full ${
-                                  row.status === "completed" 
-                                    ? "bg-success bg-opacity-10 text-success" 
-                                    : row.status === "pending" 
-                                      ? "bg-warning bg-opacity-10 text-warning" 
+                                <span className={`px-2 py-1 text-xs rounded-full ${row.status === "completed"
+                                    ? "bg-success bg-opacity-10 text-success"
+                                    : row.status === "pending"
+                                      ? "bg-warning bg-opacity-10 text-warning"
                                       : row.status === "approved"
                                         ? "bg-info bg-opacity-10 text-info"
                                         : "bg-error bg-opacity-10 text-error"
-                                }`}>
+                                  }`}>
                                   {row.status.charAt(0).toUpperCase() + row.status.slice(1)}
                                 </span>
                               )}
@@ -1188,8 +1189,8 @@ export function CustomReportBuilder() {
                     ))
                   ) : (
                     <tr>
-                      <td 
-                        colSpan={12} 
+                      <td
+                        colSpan={12}
                         className="px-4 py-10 text-center text-sm text-neutral-gray"
                       >
                         No results found matching your criteria.
@@ -1199,7 +1200,7 @@ export function CustomReportBuilder() {
                 </tbody>
               </table>
             </div>
-            
+
             {previewData.length > 0 && (
               <div className="mt-4 text-sm text-neutral-gray text-right">
                 Total: {previewData.filter((r: any) => !r.isGroupHeader).length} gate passes
@@ -1207,7 +1208,7 @@ export function CustomReportBuilder() {
             )}
           </CardContent>
         </Card>
-        
+
         <div className="flex justify-between mt-4">
           <Button
             variant="outline"
@@ -1216,7 +1217,7 @@ export function CustomReportBuilder() {
             <span className="material-icons text-sm mr-2">arrow_back</span>
             Back to Design
           </Button>
-          
+
           <Button
             onClick={() => form.handleSubmit(previewReport)()}
             disabled={isLoading}

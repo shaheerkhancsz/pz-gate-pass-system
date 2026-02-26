@@ -55,35 +55,73 @@ interface Permission {
   action: string;
 }
 
+// Types for module actions
+interface ModuleActions {
+  [key: string]: string[] | {
+    [key: string]: string;
+  };
+}
+
 // Module types for permissions
 const moduleTypes = [
   'gatePass',
   'customer',
   'driver',
-  'report',
   'user',
+  'report',
   'activityLog',
   'document',
-  'company',
+  'qrScanner',
   'notification',
-  'role',
-  'permission',
-  'dashboard'
+  'companySettings'
 ];
 
-// Permission actions
-const permissionActions = [
-  'create',
-  'read',
-  'update',
-  'delete',
-  'approve',
-  'verify',
-  'print',
-  'export',
-  'import',
-  'manage'
-];
+// Base permission actions (CRUD)
+const baseActions = ['create', 'read', 'update', 'delete'];
+
+// Special actions for specific modules
+const moduleSpecificActions: ModuleActions = {
+  gatePass: {
+    create: 'Create new gate passes',
+    read: 'View gate passes',
+    update: 'Edit existing gate passes',
+    delete: 'Delete gate passes',
+    approve: 'Approve gate passes (Manager level)',
+    verify: 'Security verification at checkpoint'
+  },
+  customer: baseActions,
+  driver: baseActions,
+  user: baseActions,
+  report: ['read', 'export'],
+  activityLog: ['read'],
+  document: {
+    create: 'Upload new documents',
+    read: 'View documents',
+    update: 'Edit document details',
+    delete: 'Delete documents'
+  },
+  qrScanner: ['read', 'scan'],
+  notification: ['read', 'manage'],
+  companySettings: ['read', 'update']
+};
+
+// Get actions for a specific module
+const getActionsForModule = (module: string): string[] => {
+  const actions = moduleSpecificActions[module];
+  if (typeof actions === 'object' && !Array.isArray(actions)) {
+    return [...baseActions, ...Object.keys(actions).filter(key => !baseActions.includes(key))];
+  }
+  return actions || baseActions;
+};
+
+// Get description for special actions
+const getActionDescription = (module: string, action: string): string | undefined => {
+  const actions = moduleSpecificActions[module];
+  if (typeof actions === 'object' && !Array.isArray(actions)) {
+    return actions[action];
+  }
+  return undefined;
+};
 
 // Form schema for adding/editing a role
 const roleFormSchema = z.object({
@@ -269,57 +307,65 @@ export function RolePermissionsManager() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Role & Permission Management</h2>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h2 className="text-2xl font-semibold">Role & Permission Management</h2>
+          <p className="text-muted-foreground mt-1">Manage user roles and their permissions</p>
+        </div>
         <Button
           onClick={() => {
             form.reset({ name: "", description: "" });
             setIsCreateDialogOpen(true);
           }}
+          className="bg-primary text-white hover:bg-primary/90"
         >
           Add New Role
         </Button>
       </div>
 
-      <Accordion type="single" collapsible className="w-full">
+      <div className="grid gap-6">
         {roles.map((role: Role) => (
-          <AccordionItem key={role.id} value={`role-${role.id}`}>
-            <AccordionTrigger className="px-4 hover:no-underline hover:bg-muted/50">
-              <div className="flex justify-between items-center w-full pr-4">
-                <span className="font-medium">{role.name}</span>
-                <span className="text-sm text-muted-foreground truncate max-w-md">{role.description}</span>
+          <div key={role.id} className="border rounded-lg shadow-sm bg-card">
+            <div className="p-6 flex justify-between items-start border-b">
+              <div>
+                <h3 className="text-lg font-semibold">{role.name}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{role.description}</p>
               </div>
-            </AccordionTrigger>
-            <AccordionContent className="px-4 pt-2">
-              <div className="mb-4 flex justify-end">
-                <Button variant="outline" onClick={() => handleEditRole(role)} size="sm">
-                  Edit Role
-                </Button>
-              </div>
-              
-              <div className="border rounded-md">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleEditRole(role)}
+                className="ml-4"
+              >
+                Edit Role
+              </Button>
+            </div>
+            
+            <div className="p-6">
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Module</TableHead>
-                      {permissionActions.map(action => (
-                        <TableHead key={action} className="text-center">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-[200px] font-semibold">Module</TableHead>
+                      {baseActions.map(action => (
+                        <TableHead key={action} className="text-center font-semibold">
                           {action.charAt(0).toUpperCase() + action.slice(1)}
                         </TableHead>
                       ))}
+                      <TableHead className="text-center font-semibold">Special Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {moduleTypes.map(module => (
-                      <TableRow key={module}>
+                      <TableRow key={module} className="hover:bg-muted/50">
                         <TableCell className="font-medium">
                           {formatModuleName(module)}
                         </TableCell>
-                        {permissionActions.map(action => (
+                        {baseActions.map(action => (
                           <TableCell key={action} className="text-center">
                             <Checkbox
                               checked={hasPermission(role.id, module, action)}
-                              disabled={role.name === 'Admin'} // Admin has all permissions by default
+                              disabled={role.name === 'Admin'}
                               onCheckedChange={() => 
                                 handlePermissionToggle(
                                   role.id, 
@@ -328,39 +374,71 @@ export function RolePermissionsManager() {
                                   hasPermission(role.id, module, action)
                                 )
                               }
+                              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                             />
                           </TableCell>
                         ))}
+                        <TableCell className="text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            {getActionsForModule(module)
+                              .filter(action => !baseActions.includes(action))
+                              .map(action => (
+                                <div key={action} className="flex flex-col items-center group relative">
+                                  <Checkbox
+                                    checked={hasPermission(role.id, module, action)}
+                                    disabled={role.name === 'Admin'}
+                                    onCheckedChange={() => 
+                                      handlePermissionToggle(
+                                        role.id, 
+                                        module, 
+                                        action,
+                                        hasPermission(role.id, module, action)
+                                      )
+                                    }
+                                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                                  />
+                                  <span className="text-xs text-muted-foreground mt-1">
+                                    {action.charAt(0).toUpperCase() + action.slice(1)}
+                                  </span>
+                                  {getActionDescription(module, action) && (
+                                    <div className="absolute bottom-full mb-2 hidden group-hover:block bg-popover text-popover-foreground text-xs p-2 rounded shadow-lg whitespace-nowrap">
+                                      {getActionDescription(module, action)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-            </AccordionContent>
-          </AccordionItem>
+            </div>
+          </div>
         ))}
-      </Accordion>
+      </div>
 
       {/* Edit Role Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Edit Role</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-xl font-semibold">Edit Role</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
               Update the role details below. Click save when you're done.
             </DialogDescription>
           </DialogHeader>
           
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmitEdit)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmitEdit)} className="space-y-6">
               <FormField
                 control={form.control}
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Role Name</FormLabel>
+                    <FormLabel className="font-medium">Role Name</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} className="h-9" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -372,18 +450,36 @@ export function RolePermissionsManager() {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel className="font-medium">Description</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} className="h-9" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               
-              <DialogFooter>
-                <Button type="submit" disabled={updateRoleMutation.isPending}>
-                  {updateRoleMutation.isPending ? "Saving..." : "Save Changes"}
+              <DialogFooter className="gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsEditDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={updateRoleMutation.isPending}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {updateRoleMutation.isPending ? (
+                    <>
+                      <span className="mr-2">Saving</span>
+                      <span className="animate-spin">⏳</span>
+                    </>
+                  ) : (
+                    "Save Changes"
+                  )}
                 </Button>
               </DialogFooter>
             </form>
@@ -393,24 +489,24 @@ export function RolePermissionsManager() {
 
       {/* Create Role Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Create New Role</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-xl font-semibold">Create New Role</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
               Add details for the new role. You can assign permissions after creation.
             </DialogDescription>
           </DialogHeader>
           
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmitCreate)} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmitCreate)} className="space-y-6">
               <FormField
                 control={form.control}
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Role Name</FormLabel>
+                    <FormLabel className="font-medium">Role Name</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} className="h-9" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -422,18 +518,36 @@ export function RolePermissionsManager() {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel className="font-medium">Description</FormLabel>
                     <FormControl>
-                      <Input {...field} />
+                      <Input {...field} className="h-9" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               
-              <DialogFooter>
-                <Button type="submit" disabled={createRoleMutation.isPending}>
-                  {createRoleMutation.isPending ? "Creating..." : "Create Role"}
+              <DialogFooter className="gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsCreateDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={createRoleMutation.isPending}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {createRoleMutation.isPending ? (
+                    <>
+                      <span className="mr-2">Creating</span>
+                      <span className="animate-spin">⏳</span>
+                    </>
+                  ) : (
+                    "Create Role"
+                  )}
                 </Button>
               </DialogFooter>
             </form>

@@ -120,6 +120,33 @@ export function usePermissions() {
   const canViewActivityLogs = (): boolean => {
     return can('activityLog', 'read');
   };
+
+  /**
+   * Check if the current user can access QR Scanner
+   * 
+   * @returns boolean indicating if the user has QR Scanner access permission
+   */
+  const canUseQRScanner = (): boolean => {
+    return can('qrScanner', 'read');
+  };
+
+  /**
+   * Check if the current user can access Documents
+   * 
+   * @returns boolean indicating if the user has Documents access permission
+   */
+  const canAccessDocuments = (): boolean => {
+    return can('document', 'read');
+  };
+
+  /**
+   * Check if the current user can access Notifications
+   * 
+   * @returns boolean indicating if the user has Notifications access permission
+   */
+  const canAccessNotifications = (): boolean => {
+    return can('notification', 'read');
+  };
   
   return {
     can,
@@ -131,6 +158,9 @@ export function usePermissions() {
     canVerifyGatePass,
     canViewReports,
     canViewActivityLogs,
+    canUseQRScanner,
+    canAccessDocuments,
+    canAccessNotifications,
     hasPermission,
     isAdmin
   };

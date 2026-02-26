@@ -23,6 +23,7 @@ import NotificationSettings from "@/pages/NotificationSettings";
 import Customers from "@/pages/Customers";
 import Drivers from "@/pages/Drivers";
 import ActivityLogs from "@/pages/ActivityLogs";
+import Documents from "@/pages/Documents";
 import NotFound from "@/pages/not-found";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
@@ -148,7 +149,7 @@ function Router() {
         />
       </Route>
       <Route path="/admin">
-        <ProtectedRoute component={Admin} adminOnly={true} />
+        <ProtectedRoute component={Admin} adminOnly />
       </Route>
       <Route path="/company-settings">
         <ProtectedRoute component={CompanySettings} adminOnly={true} />
@@ -159,7 +160,7 @@ function Router() {
       <Route path="/verify-gate-pass">
         <ProtectedRoute 
           component={VerifyGatePass} 
-          requiredPermission={{ module: "gatePass", action: "verify" }} 
+          requiredPermission={{ module: "qrScanner", action: "read" }} 
         />
       </Route>
       <Route path="/customers">
@@ -179,6 +180,13 @@ function Router() {
         <ProtectedRoute 
           component={ActivityLogs} 
           requiredPermission={{ module: "activityLog", action: "read" }}
+        />
+      </Route>
+      
+      <Route path="/documents">
+        <ProtectedRoute 
+          component={Documents} 
+          requiredPermission={{ module: "document", action: "read" }} 
         />
       </Route>
       
