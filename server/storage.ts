@@ -42,8 +42,8 @@ export interface IStorage {
   getGatePasses(filters?: Partial<{
     customerName: string;
     department: string;
-    dateFrom: Date;
-    dateTo: Date;
+    dateFrom: string;
+    dateTo: string;
     gatePassNumber: string;
     itemName: string;
     createdById: number;
