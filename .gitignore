@@ -38,3 +38,10 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Playwright test reports and results
+playwright-report/
+test-results/
+
+# Database dump files
+Database-Test/
