@@ -1,17 +1,28 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { loginSchema, gatePassWithItemsSchema, insertUserSchema, insertCustomerSchema, insertDriverSchema, insertDocumentSchema } from "@shared/schema";
+import fs from "fs";
+import path from "path";
+import { loginSchema, gatePassWithItemsSchema, insertUserSchema, insertCustomerSchema, insertDriverSchema, insertDocumentSchema, insertReportTemplateSchema } from "@shared/schema";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import { db } from "./db";
-import { roles, permissions, users, gatePasses, gatePassApprovals, approvalSettings, departments } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { roles, permissions, users, gatePasses, gatePassApprovals, approvalSettings, departments, items, documents } from "@shared/schema";
+import { eq, and, gte, lte, ilike, asc, desc } from "drizzle-orm";
 import * as notificationService from "./services/notification";
 import * as sapService from "./services/sap";
 import * as ldapService from "./services/ldap";
 import bcrypt from 'bcrypt';
 import { ModuleType, PermissionAction } from "@shared/schema";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Generate a unique 14-char alphanumeric SAP reference code (e.g. SAP-AB3K7M2PQL4X) */
+function generateSapReferenceCode(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const rand = Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  return `SAP-${rand}`;
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
@@ -63,6 +74,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         fullName: user.fullName,
         department: user.department,
         roleId: user.roleId,
+        companyId: user.companyId,
         permissions: rolePermissions
       });
 
@@ -75,28 +87,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Temporary endpoint to reset password - REMOVE AFTER USE
-  app.post("/api/auth/admin-reset-password", async (req: Request, res: Response) => {
+  // GET /api/auth/permissions — returns the current user's role permissions
+  app.get("/api/auth/permissions", async (req: Request, res: Response) => {
     try {
-      const { email, newPassword } = req.body;
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Unauthorized" });
+      const rolePermissions = user.roleId
+        ? await db.select().from(permissions).where(eq(permissions.roleId, user.roleId))
+        : [];
+      return res.json(rolePermissions);
+    } catch (error) {
+      console.error("Error fetching permissions:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
-      // Get the user
-      const user = await storage.getUserByEmail(email);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
+  // =============================================
+  // Phase 10: Forgot Password / Self-Service Reset
+  // =============================================
+
+  // POST /api/auth/forgot-password
+  // Generates a 1-hour token, emails a reset link.
+  app.post("/api/auth/forgot-password", async (req: Request, res: Response) => {
+    try {
+      const { email } = req.body as { email?: string };
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ message: "Email is required" });
       }
 
-      // Hash the new password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      const user = await storage.getUserByEmail(email.toLowerCase().trim());
+      // Always return 200 to prevent email enumeration attacks
+      if (!user) return res.json({ message: "If that email exists you will receive a reset link shortly." });
 
-      // Update the user's password
-      await storage.updateUser(user.id, {
-        password: hashedPassword
-      });
+      // Generate a secure random token
+      const crypto = await import("crypto");
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
 
-      return res.json({ message: "Password reset successful" });
+      await storage.setPasswordResetToken(user.id, token, expiry);
+
+      // Send reset email
+      const resetUrl = `${req.protocol}://${req.get("host")}/reset-password/${token}`;
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
+          <h2 style="color: #1e40af; margin-top: 0;">Password Reset Request</h2>
+          <p>You requested a password reset for your Gate Pass System account.</p>
+          <p>Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>
+          <a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background:#1e40af;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;margin:16px 0;">
+            Reset Password
+          </a>
+          <p style="font-size:12px;color:#6b7280;margin-top:24px;">
+            If you did not request this, ignore this email. Your password will not change.
+          </p>
+        </div>`;
+
+      await notificationService.sendEmail(email, "Gate Pass System — Password Reset", html).catch(() => {});
+
+      return res.json({ message: "If that email exists you will receive a reset link shortly." });
     } catch (error) {
-      console.error('Error resetting password:', error);
+      console.error("Forgot password error:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // GET /api/auth/reset-password/:token — validate token (used by frontend before showing form)
+  app.get("/api/auth/reset-password/:token", async (req: Request, res: Response) => {
+    try {
+      const user = await storage.getUserByResetToken(req.params.token);
+      if (!user || !(user as any).passwordResetExpiry) {
+        return res.status(400).json({ valid: false, message: "Invalid or expired reset link." });
+      }
+      const expiry = new Date((user as any).passwordResetExpiry);
+      if (expiry < new Date()) {
+        return res.status(400).json({ valid: false, message: "This reset link has expired." });
+      }
+      return res.json({ valid: true });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST /api/auth/reset-password/:token — set new password
+  app.post("/api/auth/reset-password/:token", async (req: Request, res: Response) => {
+    try {
+      const { password } = req.body as { password?: string };
+      if (!password || password.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters." });
+      }
+
+      const user = await storage.getUserByResetToken(req.params.token);
+      if (!user || !(user as any).passwordResetExpiry) {
+        return res.status(400).json({ message: "Invalid or expired reset link." });
+      }
+      const expiry = new Date((user as any).passwordResetExpiry);
+      if (expiry < new Date()) {
+        return res.status(400).json({ message: "This reset link has expired. Please request a new one." });
+      }
+
+      const hashed = await bcrypt.hash(password, 10);
+      await storage.updateUser(user.id, { password: hashed });
+      await storage.clearPasswordResetToken(user.id);
+
+      return res.json({ message: "Password updated successfully. You can now log in." });
+    } catch (error) {
+      console.error("Reset password error:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -106,7 +201,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // =============================================
   app.get("/api/companies", async (req: Request, res: Response) => {
     try {
-      const allCompanies = await storage.getCompanies();
+      let allCompanies = await storage.getCompanies();
+
+      // If a non-admin user has company assignments, return only those
+      const userId = req.session?.userId;
+      const isGroupAdmin = req.session?.userRole === 1;
+      if (userId && !isGroupAdmin) {
+        const { userCompanies: uCompaniesTable } = await import("@shared/schema");
+        const ucRows = await db.select().from(uCompaniesTable).where(eq(uCompaniesTable.userId, userId));
+        if (ucRows.length > 0) {
+          const assignedIds = new Set(ucRows.map(r => r.companyId));
+          allCompanies = allCompanies.filter(c => assignedIds.has(c.id));
+        }
+      }
+
       return res.json(allCompanies);
     } catch (error) {
       console.error("Error getting companies:", error);
@@ -161,6 +269,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(204).send();
     } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Theme routes — read/write theme.json for primary color
+  const THEME_PATH = path.resolve(process.cwd(), "theme.json");
+
+  app.get("/api/theme", (_req: Request, res: Response) => {
+    try {
+      const theme = JSON.parse(fs.readFileSync(THEME_PATH, "utf-8"));
+      return res.json(theme);
+    } catch {
+      return res.status(500).json({ message: "Could not read theme file" });
+    }
+  });
+
+  app.patch("/api/theme", (req: Request, res: Response) => {
+    try {
+      if (!(req as any).session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const current = JSON.parse(fs.readFileSync(THEME_PATH, "utf-8"));
+      const updated = { ...current, ...req.body };
+      fs.writeFileSync(THEME_PATH, JSON.stringify(updated, null, 2));
+      return res.json(updated);
+    } catch {
+      return res.status(500).json({ message: "Could not update theme file" });
     }
   });
 
@@ -438,6 +570,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User routes
   app.get("/api/users", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const users = await storage.getUsers();
 
       // For each user, look up their role
@@ -473,6 +606,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/users", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const userData = insertUserSchema.parse(req.body);
 
       // Hash the password
@@ -504,6 +638,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update User API
   app.patch("/api/users/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       // Set content type header first
       res.setHeader('Content-Type', 'application/json');
 
@@ -553,6 +688,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete User API
   app.delete("/api/users/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       // Set content type header first
       res.setHeader('Content-Type', 'application/json');
 
@@ -578,6 +714,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       console.error("Error deleting user:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ── User Assignments (companies / plants / gates) ──────────────────────────
+
+  app.get("/api/users/:id/assignments", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const { userCompanies, userPlants, userGates } = await import("@shared/schema");
+      const uid = parseInt(req.params.id, 10);
+      const [uc, up, ug] = await Promise.all([
+        db.select().from(userCompanies).where(eq(userCompanies.userId, uid)),
+        db.select().from(userPlants).where(eq(userPlants.userId, uid)),
+        db.select().from(userGates).where(eq(userGates.userId, uid)),
+      ]);
+      return res.json({
+        companyIds: uc.map(r => r.companyId),
+        plantIds: up.map(r => r.plantId),
+        gateIds: ug.map(r => r.gateId),
+      });
+    } catch (error) {
+      console.error("Error fetching user assignments:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/users/:id/assignments", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const { userCompanies, userPlants, userGates } = await import("@shared/schema");
+      const uid = parseInt(req.params.id, 10);
+      const { companyIds = [], plantIds = [], gateIds = [] } = req.body as {
+        companyIds?: number[]; plantIds?: number[]; gateIds?: number[];
+      };
+
+      // Replace all assignments atomically
+      await db.delete(userCompanies).where(eq(userCompanies.userId, uid));
+      await db.delete(userPlants).where(eq(userPlants.userId, uid));
+      await db.delete(userGates).where(eq(userGates.userId, uid));
+
+      if (companyIds.length > 0) {
+        await db.insert(userCompanies).values(companyIds.map(cid => ({ userId: uid, companyId: cid })));
+      }
+      if (plantIds.length > 0) {
+        await db.insert(userPlants).values(plantIds.map(pid => ({ userId: uid, plantId: pid })));
+      }
+      if (gateIds.length > 0) {
+        await db.insert(userGates).values(gateIds.map(gid => ({ userId: uid, gateId: gid })));
+      }
+
+      return res.json({ success: true });
+    } catch (error) {
+      console.error("Error saving user assignments:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ── /api/users/me/assignments — for the current logged-in user ──────────────
+  app.get("/api/me/assignments", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const { userCompanies, userPlants, userGates } = await import("@shared/schema");
+      const uid = req.session.userId;
+      const [uc, up, ug] = await Promise.all([
+        db.select().from(userCompanies).where(eq(userCompanies.userId, uid)),
+        db.select().from(userPlants).where(eq(userPlants.userId, uid)),
+        db.select().from(userGates).where(eq(userGates.userId, uid)),
+      ]);
+      return res.json({
+        companyIds: uc.map(r => r.companyId),
+        plantIds: up.map(r => r.plantId),
+        gateIds: ug.map(r => r.gateId),
+      });
+    } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -617,26 +828,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Build filters object with proper type
+      // Build filters — pass date strings directly to avoid timezone conversion bugs
       const filters: Parameters<typeof storage.getGatePasses>[0] = {
-        customerName: req.query.customerName as string || undefined,
-        department: req.query.department as string || undefined,
-        dateFrom: req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined,
-        dateTo: req.query.dateTo ? new Date(req.query.dateTo as string) : undefined,
-        gatePassNumber: req.query.gatePassNumber as string || undefined,
-        itemName: req.query.itemName as string || undefined,
-        status: req.query.status as string || undefined,
-        type: req.query.type as string || undefined,
+        customerName: (req.query.customerName as string) || undefined,
+        department: (req.query.department as string) || undefined,
+        dateFrom: (req.query.dateFrom as string) || undefined,
+        dateTo: (req.query.dateTo as string) || undefined,
+        gatePassNumber: (req.query.gatePassNumber as string) || undefined,
+        itemName: (req.query.itemName as string) || undefined,
+        status: (req.query.status as string) || undefined,
+        type: (req.query.type as string) || undefined,
       };
 
+      // Check if user has security/verify permission — security sees all departments
+      const canVerifyAll = userPermissions.some(
+        (p) => p.module === "gatePass" && p.action === "verify"
+      );
+
       // If user is not admin or group admin:
-      // 1. They can only see gate passes from their department
-      // 2. They can only see gate passes from their company
+      // 1. Security (gatePass:verify) can see all departments but only their company
+      // 2. Others can only see gate passes from their own department and company
       if (!canViewAll && !isGroupAdmin) {
-        filters.department = user.department;
+        if (!canVerifyAll) {
+          filters.department = user.department;
+        }
         if (user.companyId) {
           filters.companyId = user.companyId;
         }
+      } else if (req.query.companyId) {
+        // Admin/group-admin can filter by company from query param
+        filters.companyId = parseInt(req.query.companyId as string, 10);
       }
 
       const gatePasses = await storage.getGatePasses(filters);
@@ -648,43 +869,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Verification endpoint (must come before the /:id route to avoid conflicts)
+  // Public endpoint — no authentication required (used by QR code scans at gate)
   app.get("/api/gate-passes/verify/:gatePassNumber", async (req: Request, res: Response) => {
     try {
-      // Check if user is authenticated
-      if (!req.session?.userId) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      // Get user's role and permissions
-      const user = await storage.getUser(req.session.userId);
-      if (!user) {
-        return res.status(401).json({ message: "User not found" });
-      }
-
-      // Get user's permissions
-      const userPermissions = await db
-        .select()
-        .from(permissions)
-        .where(eq(permissions.roleId, user.roleId || 0));
-
-      // Check if user has permission to verify gate passes
-      const canVerify = user.roleId === 1 || // Admin role
-        userPermissions.some(p =>
-          p.module === 'qrScanner' && p.action === 'read'
-        );
-
-      if (!canVerify) {
-        return res.status(403).json({ message: "Permission denied" });
-      }
-
       const { gatePassNumber } = req.params;
-      console.log("Verifying gate pass number:", gatePassNumber);
 
       const gatePass = await storage.getGatePassByNumber(gatePassNumber);
-      console.log("Gate pass found:", gatePass ? "Yes" : "No");
 
       if (!gatePass) {
-        console.log("Gate pass not found for verification");
         return res.status(404).json({
           isValid: false,
           message: "Gate pass not found",
@@ -694,17 +886,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Get items for this gate pass
       const items = await storage.getItemsByGatePassId(gatePass.id);
-      console.log("Items retrieved:", items.length);
 
-      // Create the response object with all needed data
+      // A pass is only valid when security has allowed it or it is completed
+      const validStatuses = ["security_allowed", "completed"];
+      const isValid = validStatuses.includes(gatePass.status);
+
       const verificationResult = {
         ...gatePass,
         items,
-        isValid: true,
+        isValid,
         verifiedAt: new Date().toISOString()
       };
 
-      console.log("Sending verification response for gate pass:", gatePassNumber);
       return res.status(200).json(verificationResult);
     } catch (error) {
       console.error("Error verifying gate pass:", error);
@@ -732,7 +925,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const items = await storage.getItemsByGatePassId(id);
-      return res.json({ ...gatePass, items });
+
+      // Enrich with gate name, company info, and approver names for print view
+      const [gateName, companyInfo, hodApprover, securityApprover] = await Promise.all([
+        (gatePass as any).gateId ? storage.getGate((gatePass as any).gateId).then(g => g?.name ?? null) : Promise.resolve(null),
+        (gatePass as any).companyId ? storage.getCompany((gatePass as any).companyId).then(c => c ? { name: c.name, logo: c.logo } : null) : Promise.resolve(null),
+        (gatePass as any).hodApprovedBy ? storage.getUser((gatePass as any).hodApprovedBy).then(u => u?.fullName ?? null) : Promise.resolve(null),
+        (gatePass as any).securityAllowedBy ? storage.getUser((gatePass as any).securityAllowedBy).then(u => u?.fullName ?? null) : Promise.resolve(null),
+      ]);
+
+      return res.json({
+        ...gatePass,
+        items,
+        gateName,
+        companyInfo,
+        hodApproverName: hodApprover,
+        securityApproverName: securityApprover,
+      });
     } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
     }
@@ -755,6 +964,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (userData?.companyId && !gatePassData.companyId) {
         (gatePassData as any).companyId = userData.companyId;
       }
+
+      // Normalize date fields: Zod coerces strings → JS Date objects.
+      // MySQL DATE columns need plain "YYYY-MM-DD" strings.
+      // String(Date) gives locale junk like "Thu Apr 16 2026 00:00:00 GMT+0000"
+      // so we must use toISOString() for Date objects.
+      const toDateOnly = (v: any): string | null => {
+        if (!v) return null;
+        if (v instanceof Date) return v.toISOString().split("T")[0];
+        return String(v).split("T")[0];
+      };
+      if (gatePassData.date) (gatePassData as any).date = toDateOnly(gatePassData.date);
+      if ((gatePassData as any).expectedReturnDate !== undefined)
+        (gatePassData as any).expectedReturnDate = (gatePassData as any).expectedReturnDate
+          ? toDateOnly((gatePassData as any).expectedReturnDate)
+          : null;
+      if ((gatePassData as any).actualReturnDate !== undefined)
+        (gatePassData as any).actualReturnDate = (gatePassData as any).actualReturnDate
+          ? toDateOnly((gatePassData as any).actualReturnDate)
+          : null;
 
       // Create the gate pass first
       const gatePass = await storage.createGatePass(gatePassData);
@@ -824,6 +1052,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Phase 3: Mark Returnable Pass as Returned
   // =============================================
 
+  // Helper to get IP address string (used across workflow endpoints)
+  function getIpAddresses(req: Request): string {
+    const clientIp = req.ip || req.socket.remoteAddress || "unknown";
+    const forwardedIp = req.headers['x-forwarded-for']
+      ? (typeof req.headers['x-forwarded-for'] === 'string'
+        ? req.headers['x-forwarded-for']
+        : req.headers['x-forwarded-for'][0])
+      : null;
+    return forwardedIp ? `${clientIp} (Local), ${forwardedIp} (ISP)` : clientIp;
+  }
+
   // Mark as Returned: sets actualReturnDate on a returnable pass
   app.post("/api/gate-passes/:id/mark-returned", async (req: Request, res: Response) => {
     try {
@@ -848,7 +1087,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Marked returnable gate pass #${gatePass.gatePassNumber} as returned on ${returnDate}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ timestamp: new Date().toISOString(), actualReturnDate: returnDate })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -861,17 +1100,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // =============================================
   // Phase 2: Approval Workflow Action Endpoints
   // =============================================
-
-  // Helper to get IP address string
-  function getIpAddresses(req: Request): string {
-    const clientIp = req.ip || req.socket.remoteAddress || "unknown";
-    const forwardedIp = req.headers['x-forwarded-for']
-      ? (typeof req.headers['x-forwarded-for'] === 'string'
-        ? req.headers['x-forwarded-for']
-        : req.headers['x-forwarded-for'][0])
-      : null;
-    return forwardedIp ? `${clientIp} (Local), ${forwardedIp} (ISP)` : clientIp;
-  }
 
   // Approve: pending → approved (supports ANY mode and ALL mode)
   app.post("/api/gate-passes/:id/approve", async (req: Request, res: Response) => {
@@ -935,8 +1163,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Phase 4: Notify initiator + security (non-blocking)
         const actorName = actor?.fullName || actor?.email || "Approver";
-        notificationService.notifyInitiatorOfHodDecision(gatePass, "approved", actorName).catch(() => { });
-        notificationService.notifySecurityOfApprovedPass(gatePass).catch(() => { });
+        notificationService.notifyInitiatorOfHodDecision(gatePass, "approved", actorName).catch((err: any) => console.warn("[Notification]", err?.message || err));
+        notificationService.notifySecurityOfApprovedPass(gatePass).catch((err: any) => console.warn("[Notification]", err?.message || err));
       }
 
       await storage.logUserActivity({
@@ -947,7 +1175,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : `Partial approval recorded for gate pass #${gatePass.gatePassNumber} (waiting for all approvers)`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ mode, newStatus, timestamp: new Date().toISOString() })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items, approvalStatus: newStatus });
@@ -981,11 +1209,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Rejected gate pass #${gatePass.gatePassNumber}${remarks ? `: ${remarks}` : ""}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ timestamp: new Date().toISOString(), remarks })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       // Phase 4: Notify initiator of rejection (non-blocking)
       const actorName = actor?.fullName || actor?.email || "HOD";
-      notificationService.notifyInitiatorOfHodDecision(gatePass, "rejected", actorName, remarks).catch(() => { });
+      notificationService.notifyInitiatorOfHodDecision(gatePass, "rejected", actorName, remarks).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1022,11 +1250,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Sent back gate pass #${gatePass.gatePassNumber}: ${remarks}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ timestamp: new Date().toISOString(), remarks })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       // Phase 4: Notify initiator of send-back with remarks (non-blocking)
       const actorName = actor?.fullName || actor?.email || "HOD";
-      notificationService.notifyInitiatorOfHodDecision(gatePass, "sent_back", actorName, remarks).catch(() => { });
+      notificationService.notifyInitiatorOfHodDecision(gatePass, "sent_back", actorName, remarks).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1036,7 +1264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Security Allow: approved → security_allowed
+  // Security Allow: approved → security_allowed (outward passes auto-complete immediately)
   app.post("/api/gate-passes/:id/security-allow", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
@@ -1049,19 +1277,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { userId } = req.body;
       const actor = await storage.getUser(userId);
 
+      // Outward passes auto-complete on security clearance; returnable/inward stay as security_allowed
+      const isOutward = (gatePass as any).type === "outward";
+      const newStatus = isOutward ? "completed" : "security_allowed";
+      const sapCode = isOutward ? generateSapReferenceCode() : undefined;
+
       const updated = await storage.updateGatePass(id, {
-        status: "security_allowed",
+        status: newStatus,
         securityAllowedBy: userId || null,
         securityAllowedAt: new Date(),
+        ...(sapCode ? { sapReferenceCode: sapCode } : {}),
       } as any);
 
       await storage.logUserActivity({
         userId, userEmail: actor?.email || "unknown",
         actionType: "security_allow", entityType: "gate_pass", entityId: id,
-        description: `Security allowed gate pass #${gatePass.gatePassNumber}`,
+        description: isOutward
+          ? `Security allowed & auto-completed outward gate pass #${gatePass.gatePassNumber} — SAP Ref: ${sapCode}`
+          : `Security allowed gate pass #${gatePass.gatePassNumber}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
-        additionalData: JSON.stringify({ timestamp: new Date().toISOString(), gatePassNumber: gatePass.gatePassNumber })
-      }).catch(() => { });
+        additionalData: JSON.stringify({ timestamp: new Date().toISOString(), gatePassNumber: gatePass.gatePassNumber, sapReferenceCode: sapCode })
+      }).catch((err: any) => console.warn("[Activity]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1098,11 +1334,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Security sent back gate pass #${gatePass.gatePassNumber}: ${remarks}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ timestamp: new Date().toISOString(), remarks })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       // Notify initiator of security send-back with remarks (non-blocking)
       const actorName = actor?.fullName || actor?.email || "Security";
-      notificationService.notifyInitiatorOfHodDecision(gatePass, "sent_back", actorName, remarks).catch(() => { });
+      notificationService.notifyInitiatorOfHodDecision(gatePass, "sent_back", actorName, remarks).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1112,7 +1348,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Complete: security_allowed → completed
+  // Complete: security_allowed → completed (generates SAP reference code)
   app.post("/api/gate-passes/:id/complete", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
@@ -1125,15 +1361,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { userId } = req.body;
       const actor = await storage.getUser(userId);
 
-      const updated = await storage.updateGatePass(id, { status: "completed" } as any);
+      // Generate unique SAP reference code
+      const sapCode = generateSapReferenceCode();
+
+      const updated = await storage.updateGatePass(id, { status: "completed", sapReferenceCode: sapCode } as any);
 
       await storage.logUserActivity({
         userId, userEmail: actor?.email || "unknown",
         actionType: "complete", entityType: "gate_pass", entityId: id,
-        description: `Completed gate pass #${gatePass.gatePassNumber}`,
+        description: `Completed gate pass #${gatePass.gatePassNumber} — SAP Ref: ${sapCode}`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
-        additionalData: JSON.stringify({ timestamp: new Date().toISOString(), gatePassNumber: gatePass.gatePassNumber })
-      }).catch(() => { });
+        additionalData: JSON.stringify({ timestamp: new Date().toISOString(), gatePassNumber: gatePass.gatePassNumber, sapReferenceCode: sapCode })
+      }).catch((err: any) => console.warn("[Activity]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1143,23 +1382,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Resubmit: sent_back → pending (initiator edits and resubmits)
+  // Receive Items: Security guard records partial/full return for returnable passes
+  app.post("/api/gate-passes/:id/receive-items", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const id = parseInt(req.params.id, 10);
+      const gatePass = await storage.getGatePass(id);
+      if (!gatePass) return res.status(404).json({ message: "Gate pass not found" });
+      if ((gatePass as any).type !== "returnable") {
+        return res.status(400).json({ message: "Only returnable gate passes support item receiving" });
+      }
+      if (!["security_allowed"].includes(gatePass.status)) {
+        return res.status(400).json({ message: "Items can only be received on security-allowed passes" });
+      }
+
+      const { itemReturns } = req.body as { itemReturns: Array<{ itemId: number; receivedQuantity: number }> };
+      if (!Array.isArray(itemReturns) || itemReturns.length === 0) {
+        return res.status(400).json({ message: "itemReturns array is required" });
+      }
+
+      const allItems = await storage.getItemsByGatePassId(id);
+
+      // Update received quantity for each item
+      for (const ret of itemReturns) {
+        const item = allItems.find(i => i.id === ret.itemId);
+        if (!item) continue;
+        const newReceived = ((item as any).receivedQuantity ?? 0) + ret.receivedQuantity;
+        const capped = Math.min(newReceived, item.quantity);
+        await db.update(items).set({ receivedQuantity: capped } as any).where(eq(items.id, ret.itemId));
+      }
+
+      // Re-fetch items to check if all are fully returned
+      const updatedItems = await storage.getItemsByGatePassId(id);
+      const allReturned = updatedItems.every(i => ((i as any).receivedQuantity ?? 0) >= i.quantity);
+
+      let updatedPass = gatePass;
+      let sapCode: string | undefined;
+      if (allReturned) {
+        sapCode = generateSapReferenceCode();
+        updatedPass = await storage.updateGatePass(id, {
+          status: "completed",
+          actualReturnDate: new Date(),
+          sapReferenceCode: sapCode,
+        } as any) ?? gatePass;
+      }
+
+      await storage.logUserActivity({
+        userId: req.session.userId,
+        userEmail: "unknown",
+        actionType: "receive_items",
+        entityType: "gate_pass",
+        entityId: id,
+        description: allReturned
+          ? `All items received — gate pass #${(gatePass as any).gatePassNumber} auto-completed. SAP Ref: ${sapCode}`
+          : `Partial items received for gate pass #${(gatePass as any).gatePassNumber}`,
+        ipAddress: getIpAddresses(req),
+        userAgent: req.headers["user-agent"] || "unknown",
+        additionalData: JSON.stringify({ itemReturns, allReturned, sapReferenceCode: sapCode }),
+      }).catch(() => {});
+
+      return res.json({ ...updatedPass, items: updatedItems, allReturned });
+    } catch (error) {
+      console.error("Error receiving items:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Resubmit: sent_back | rejected → pending (initiator edits and resubmits)
   app.post("/api/gate-passes/:id/resubmit", async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       const gatePass = await storage.getGatePass(id);
       if (!gatePass) return res.status(404).json({ message: "Gate pass not found" });
-      if (gatePass.status !== "sent_back") {
+      if (!["sent_back", "rejected"].includes(gatePass.status)) {
         return res.status(400).json({ message: `Cannot resubmit a pass with status: ${gatePass.status}` });
       }
 
       const { userId } = req.body;
       const actor = await storage.getUser(userId);
 
+      // Clear all previous approval votes so approvers can re-approve from scratch
+      await db.delete(gatePassApprovals).where(eq(gatePassApprovals.gatePassId, id));
+
       // Clear remarks when resubmitting so it starts fresh
       const updated = await storage.updateGatePass(id, {
         status: "pending",
         remarks: null,
+        securityRemarks: null,
+        approvedBy: null,
+        approvedAt: null,
+        hodApprovedBy: null,
+        hodApprovedAt: null,
       } as any);
 
       await storage.logUserActivity({
@@ -1168,10 +1482,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Resubmitted gate pass #${gatePass.gatePassNumber} for approval`,
         ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
         additionalData: JSON.stringify({ timestamp: new Date().toISOString(), gatePassNumber: gatePass.gatePassNumber })
-      }).catch(() => { });
+      }).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       // Phase 4: Notify HOD that pass has been resubmitted (non-blocking)
-      notificationService.notifyHodOfResubmission(gatePass).catch(() => { });
+      notificationService.notifyHodOfResubmission(gatePass).catch((err: any) => console.warn("[Notification]", err?.message || err));
 
       const items = await storage.getItemsByGatePassId(id);
       return res.json({ ...updated, items });
@@ -1181,8 +1495,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Security: update Allow To field on an approved gate pass
+  app.patch("/api/gate-passes/:id/allow-to", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const gatePass = await storage.getGatePass(id);
+      if (!gatePass) return res.status(404).json({ message: "Gate pass not found" });
+
+      const { allowTo, userId } = req.body;
+      if (typeof allowTo !== "string") return res.status(400).json({ message: "allowTo is required" });
+
+      const updated = await storage.updateGatePass(id, { allowTo } as any);
+
+      await storage.logUserActivity({
+        userId, userEmail: (await storage.getUser(userId))?.email || "unknown",
+        actionType: "update", entityType: "gate_pass", entityId: id,
+        description: `Security updated Allow To on gate pass #${gatePass.gatePassNumber}`,
+        ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
+        additionalData: JSON.stringify({ allowTo, timestamp: new Date().toISOString() })
+      }).catch(() => {});
+
+      return res.json(updated);
+    } catch (error) {
+      console.error("Error updating allowTo:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.patch("/api/gate-passes/:id", async (req: Request, res: Response) => {
     try {
+      // Auth check
+      if (!req.session?.userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
       const id = parseInt(req.params.id, 10);
       const gatePass = await storage.getGatePass(id);
 
@@ -1190,64 +1536,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Gate pass not found" });
       }
 
-      // Phase 2: Lock editing once pass has moved beyond pending/sent_back
-      // Only admins (roleId 1) can bypass this lock
-      const isAdmin = req.body.user?.roleId === 1 || req.body.userRoleId === 1;
-      const lockedStatuses = ["approved", "security_allowed", "completed", "rejected"];
+      // Determine admin status from session — not from request body (security fix)
+      const sessionUser = await storage.getUser(req.session.userId);
+      const isAdmin = sessionUser?.roleId === 1;
+
+      // Lock editing once pass has moved beyond pending/sent_back
+      const lockedStatuses = ["hod_approved", "approved", "security_allowed", "completed", "rejected", "force_closed"];
       if (!isAdmin && lockedStatuses.includes(gatePass.status)) {
         return res.status(403).json({
           message: `Gate pass cannot be edited — current status is "${gatePass.status}". Use the workflow actions instead.`
         });
       }
 
+      // Strip non-column fields before passing to Drizzle's .set()
+      // Passing objects like `user` or arrays like `items` directly causes a MySQL error
+      const { user: _u, items: itemsData, updatedById, updatedByEmail, ...gatePassData } = req.body;
+
+      // Normalize date fields: Zod coerces "YYYY-MM-DD" → JS Date → JSON gives
+      // "YYYY-MM-DDT00:00:00.000Z", which MySQL DATE columns reject.
+      // Strip everything after "T" to get plain "YYYY-MM-DD" strings.
+      const toDateOnly = (v: any) =>
+        v ? String(v).split("T")[0] : null;
+      if (gatePassData.date) gatePassData.date = toDateOnly(gatePassData.date);
+      if (gatePassData.expectedReturnDate !== undefined)
+        gatePassData.expectedReturnDate = gatePassData.expectedReturnDate
+          ? toDateOnly(gatePassData.expectedReturnDate)
+          : null;
+      if (gatePassData.actualReturnDate !== undefined)
+        gatePassData.actualReturnDate = gatePassData.actualReturnDate
+          ? toDateOnly(gatePassData.actualReturnDate)
+          : null;
+
       // Update the gate pass
-      const updatedGatePass = await storage.updateGatePass(id, req.body);
+      const updatedGatePass = await storage.updateGatePass(id, gatePassData);
 
-      // If items are included, update them too
-      let items = [];
-      if (req.body.items) {
-        // First, delete existing items
+      // If items are included, replace them
+      let items: any[] = [];
+      if (itemsData) {
         await storage.deleteItemsByGatePassId(id);
-
-        // Then create new ones
-        for (const itemData of req.body.items) {
-          const item = await storage.createItem({
-            ...itemData,
-            gatePassId: id
-          });
+        for (const itemData of itemsData) {
+          const item = await storage.createItem({ ...itemData, gatePassId: id });
           items.push(item);
         }
       } else {
-        // If no items were included, fetch the existing ones
         items = await storage.getItemsByGatePassId(id);
       }
 
       // Log gate pass update activity
       try {
-        const userId = req.body.updatedById || gatePass.createdById;
+        const actorId = updatedById || req.session.userId;
+        const actorUser = await storage.getUser(actorId);
 
-        // Fetch user information from database
-        const userData = await storage.getUser(userId);
-        if (!userData) {
-          console.warn(`User with ID ${userId} not found for activity logging`);
-        }
-
-        // Get IP addresses - both local and from proxies if available
         const clientIp = req.ip || req.socket.remoteAddress || "unknown";
-        const forwardedIp = req.headers['x-forwarded-for'] ?
-          (typeof req.headers['x-forwarded-for'] === 'string' ?
-            req.headers['x-forwarded-for'] :
-            req.headers['x-forwarded-for'][0]) :
-          null;
-
-        // Combine both IPs for comprehensive tracking
-        const ipAddresses = forwardedIp ?
-          `${clientIp} (Local), ${forwardedIp} (ISP)` :
-          clientIp;
+        const forwardedIp = req.headers['x-forwarded-for']
+          ? (typeof req.headers['x-forwarded-for'] === 'string'
+              ? req.headers['x-forwarded-for']
+              : req.headers['x-forwarded-for'][0])
+          : null;
+        const ipAddresses = forwardedIp ? `${clientIp} (Local), ${forwardedIp} (ISP)` : clientIp;
 
         await storage.logUserActivity({
-          userId: userId,
-          userEmail: userData ? userData.email : (req.body.updatedByEmail || "unknown user"),
+          userId: actorId,
+          userEmail: actorUser?.email || updatedByEmail || "unknown user",
           actionType: "update",
           entityType: "gate_pass",
           entityId: gatePass.id,
@@ -1256,16 +1606,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userAgent: req.headers["user-agent"] || "unknown",
           additionalData: JSON.stringify({
             timestamp: new Date().toISOString(),
-            changes: Object.keys(req.body)
-              .filter(key => key !== 'items' && key !== 'updatedById' && key !== 'updatedByEmail')
-              .join(', '),
-            itemsUpdated: req.body.items ? true : false,
-            newStatus: req.body.status || gatePass.status
-          })
+            itemsUpdated: !!itemsData,
+            newStatus: req.body.status || gatePass.status,
+          }),
         });
       } catch (error: any) {
         console.warn("Failed to log user activity:", error.message);
-        // Continue with response even if activity logging fails
       }
 
       res.setHeader('Content-Type', 'application/json');
@@ -1352,7 +1698,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/customers", async (req: Request, res: Response) => {
     try {
       const searchTerm = req.query.search as string || undefined;
-      const customers = await storage.getCustomers(searchTerm);
+      const companyId = req.query.companyId ? parseInt(req.query.companyId as string, 10) : undefined;
+      const customers = await storage.getCustomers(searchTerm, companyId);
       return res.json(customers);
     } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
@@ -1382,6 +1729,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/customers", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       // Phase 5: Block manual creation when SAP is enabled for the company
       if (req.body.companyId) {
         const sapCfg = await sapService.getSapConfig(Number(req.body.companyId));
@@ -1453,6 +1801,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/customers/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const id = parseInt(req.params.id, 10);
       const customer = await storage.getCustomer(id);
 
@@ -1474,7 +1823,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/drivers", async (req: Request, res: Response) => {
     try {
       const searchTerm = req.query.search as string || undefined;
-      const drivers = await storage.getDrivers(searchTerm);
+      const companyId = req.query.companyId ? parseInt(req.query.companyId as string, 10) : undefined;
+      const drivers = await storage.getDrivers(searchTerm, companyId);
       return res.json(drivers);
     } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
@@ -1519,6 +1869,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/drivers", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       // Phase 5: Block manual creation when SAP is enabled for the company
       if (req.body.companyId) {
         const sapCfg = await sapService.getSapConfig(Number(req.body.companyId));
@@ -1599,6 +1950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/drivers/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const id = parseInt(req.params.id, 10);
       const driver = await storage.getDriver(id);
 
@@ -1627,6 +1979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Statistics routes
   app.get("/api/statistics", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const statistics = await storage.getStatistics();
       return res.json(statistics);
     } catch (error) {
@@ -1634,59 +1987,186 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Item Movement Report — joins items with gate passes
+  app.get("/api/reports/item-movement", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Unauthorized" });
+
+      const {
+        dateFrom, dateTo, type, department, status, itemName,
+        companyId: companyIdParam,
+      } = req.query;
+
+      const isAdmin = user.roleId === 1;
+      const isGroupAdmin = user.roleId === 2;
+
+      // Build where conditions for gate passes
+      const conditions: any[] = [];
+
+      // Company scoping
+      if (!isAdmin && !isGroupAdmin) {
+        if (user.companyId) conditions.push(eq(gatePasses.companyId, user.companyId));
+      } else if (companyIdParam) {
+        conditions.push(eq(gatePasses.companyId, Number(companyIdParam)));
+      }
+
+      if (dateFrom) conditions.push(gte(gatePasses.date, new Date(dateFrom as string)));
+      if (dateTo)   conditions.push(lte(gatePasses.date, new Date(dateTo as string)));
+      if (type)     conditions.push(eq(gatePasses.type, type as string));
+      if (department) conditions.push(eq(gatePasses.department, department as string));
+      if (status)   conditions.push(eq(gatePasses.status, status as string));
+      if (itemName) conditions.push(ilike(items.name, `%${itemName}%`));
+
+      const rows = await db
+        .select({
+          itemId:         items.id,
+          itemName:       items.name,
+          sku:            items.sku,
+          quantity:       items.quantity,
+          gatePassId:     gatePasses.id,
+          gatePassNumber: gatePasses.gatePassNumber,
+          date:           gatePasses.date,
+          type:           gatePasses.type,
+          status:         gatePasses.status,
+          department:     gatePasses.department,
+          customerName:   gatePasses.customerName,
+          companyId:      gatePasses.companyId,
+        })
+        .from(items)
+        .innerJoin(gatePasses, eq(items.gatePassId, gatePasses.id))
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(gatePasses.date))
+        .limit(5000);
+
+      return res.json(rows);
+    } catch (error) {
+      console.error("Error fetching item movement report:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // User Activity Logs
   app.get("/api/activity-logs", async (req: Request, res: Response) => {
     try {
-      // Get filter parameters from request query
-      const {
-        userId,
-        userEmail,
-        actionType,
-        entityType,
-        dateFrom,
-        dateTo
-      } = req.query;
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
 
-      // Build filters object
+      const { userId, userEmail, actionType, entityType, dateFrom, dateTo, page, limit } = req.query;
+
       const filters: any = {};
-
-      if (userId && !isNaN(Number(userId))) {
-        filters.userId = Number(userId);
-      }
-
-      if (userEmail && typeof userEmail === 'string') {
-        filters.userEmail = userEmail;
-      }
-
-      if (actionType && typeof actionType === 'string') {
-        filters.actionType = actionType;
-      }
-
-      if (entityType && typeof entityType === 'string') {
-        filters.entityType = entityType;
-      }
-
-      if (dateFrom && typeof dateFrom === 'string') {
-        filters.dateFrom = new Date(dateFrom);
-      }
-
+      if (userId && !isNaN(Number(userId))) filters.userId = Number(userId);
+      if (userEmail && typeof userEmail === 'string') filters.userEmail = userEmail;
+      if (actionType && typeof actionType === 'string') filters.actionType = actionType;
+      if (entityType && typeof entityType === 'string') filters.entityType = entityType;
+      if (dateFrom && typeof dateFrom === 'string') filters.dateFrom = new Date(dateFrom);
       if (dateTo && typeof dateTo === 'string') {
-        filters.dateTo = new Date(dateTo);
+        const d = new Date(dateTo);
+        d.setHours(23, 59, 59, 999);
+        filters.dateTo = d;
       }
 
-      // Get logs with filters
-      const logs = await storage.getUserActivityLogs(filters);
+      const pageNum = page ? Math.max(1, Number(page)) : 1;
+      const limitNum = limit ? Math.min(5000, Math.max(1, Number(limit))) : 50;
 
-      return res.json(logs);
+      const result = await storage.getUserActivityLogs(filters, { page: pageNum, limit: limitNum });
+      return res.json(result);
     } catch (error) {
       console.error("Error getting activity logs:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
   });
 
+  // Document Report — bulk metadata listing (no fileData), left-joins gatePasses for context
+  app.get("/api/reports/documents", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Unauthorized" });
+
+      const isAdmin     = user.roleId === 1;
+      const isGroupAdmin = user.roleId === 2;
+      const { dateFrom, dateTo, entityType: entityTypeParam, fileType, uploadedByEmail, companyId: companyIdParam } = req.query;
+
+      const conditions: any[] = [];
+
+      // Company scoping via gate pass join — only meaningful for gatePass entity type
+      if (!isAdmin && !isGroupAdmin) {
+        if (user.companyId) conditions.push(eq(gatePasses.companyId, user.companyId));
+      } else if (companyIdParam) {
+        conditions.push(eq(gatePasses.companyId, Number(companyIdParam)));
+      }
+
+      if (entityTypeParam) conditions.push(eq(documents.entityType, entityTypeParam as string));
+      if (fileType)         conditions.push(ilike(documents.fileType, `%${fileType}%`));
+      if (uploadedByEmail)  conditions.push(ilike(documents.uploadedByEmail, `%${uploadedByEmail}%`));
+      if (dateFrom)         conditions.push(gte(documents.createdAt, new Date(dateFrom as string)));
+      if (dateTo) {
+        const end = new Date(dateTo as string);
+        end.setHours(23, 59, 59, 999);
+        conditions.push(lte(documents.createdAt, end));
+      }
+
+      const rows = await db
+        .select({
+          id:              documents.id,
+          fileName:        documents.fileName,
+          fileType:        documents.fileType,
+          fileSize:        documents.fileSize,
+          entityType:      documents.entityType,
+          entityId:        documents.entityId,
+          description:     documents.description,
+          uploadedByEmail: documents.uploadedByEmail,
+          createdAt:       documents.createdAt,
+          // Gate pass context (null for non-gatePass entities)
+          gatePassNumber:  gatePasses.gatePassNumber,
+          gatePassDate:    gatePasses.date,
+          gatePassType:    gatePasses.type,
+          gatePassStatus:  gatePasses.status,
+          department:      gatePasses.department,
+          customerName:    gatePasses.customerName,
+          companyId:       gatePasses.companyId,
+        })
+        .from(documents)
+        .leftJoin(
+          gatePasses,
+          and(
+            eq(documents.entityId, gatePasses.id),
+            eq(documents.entityType, "gatePass")
+          )
+        )
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(documents.createdAt))
+        .limit(5000);
+
+      return res.json(rows);
+    } catch (error) {
+      console.error("Error fetching document report:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Document routes
+  app.get("/api/documents", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
+      const { entityType, search, dateFrom, dateTo } = req.query;
+      const filters: any = {};
+      if (entityType && typeof entityType === 'string') filters.entityType = entityType;
+      if (search && typeof search === 'string') filters.search = search;
+      if (dateFrom && typeof dateFrom === 'string') filters.dateFrom = new Date(dateFrom);
+      if (dateTo && typeof dateTo === 'string') filters.dateTo = new Date(dateTo);
+      const docs = await storage.getAllDocuments(filters);
+      return res.json(docs);
+    } catch (error) {
+      console.error("Error getting all documents:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.get("/api/documents/entity/:type/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const entityType = req.params.type;
       const entityId = parseInt(req.params.id, 10);
 
@@ -1704,6 +2184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/documents/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const documentId = parseInt(req.params.id, 10);
       if (isNaN(documentId)) {
         return res.status(400).json({ message: "Invalid document ID" });
@@ -1723,15 +2204,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/documents", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const documentData = insertDocumentSchema.parse(req.body);
 
       // Log the user activity
-      const user = req.body.user;
-      if (user && user.id) {
+      const sessionUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (sessionUser) {
         try {
           await storage.logUserActivity({
-            userId: user.id,
-            userEmail: user.email,
+            userId: sessionUser.id,
+            userEmail: sessionUser.email,
             actionType: "create",
             entityType: "document",
             entityId: null,
@@ -1764,6 +2246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/documents/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const documentId = parseInt(req.params.id, 10);
       if (isNaN(documentId)) {
         return res.status(400).json({ message: "Invalid document ID" });
@@ -1785,12 +2268,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Log the user activity
-      const user = req.body.user;
-      if (user && user.id) {
+      const sessionUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (sessionUser) {
         try {
           await storage.logUserActivity({
-            userId: user.id,
-            userEmail: user.email,
+            userId: sessionUser.id,
+            userEmail: sessionUser.email,
             actionType: "update",
             entityType: "document",
             entityId: documentId,
@@ -1819,6 +2302,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/documents/:id", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const documentId = parseInt(req.params.id, 10);
       if (isNaN(documentId)) {
         return res.status(400).json({ message: "Invalid document ID" });
@@ -1830,12 +2314,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Log the user activity
-      const user = req.body.user;
-      if (user && user.id) {
+      const sessionUser = req.session.userId ? await storage.getUser(req.session.userId) : null;
+      if (sessionUser) {
         try {
           await storage.logUserActivity({
-            userId: user.id,
-            userEmail: user.email,
+            userId: sessionUser.id,
+            userEmail: sessionUser.email,
             actionType: "delete",
             entityType: "document",
             entityId: documentId,
@@ -1870,6 +2354,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Notification Settings routes
   app.get("/api/settings/notifications", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const settings = await notificationService.getNotificationSettings();
       return res.json({
         email: {
@@ -1900,6 +2385,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/settings/notifications", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const { email, sms, whatsapp } = req.body;
 
       if (!email || !sms) {
@@ -1935,12 +2421,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       };
 
-      console.log('Saving notification settings:', {
-        emailEnabled: settings.emailEnabled,
-        emailHost: settings.emailConfig.host,
-        smsEnabled: settings.smsEnabled
-      });
-
       const success = await notificationService.saveNotificationSettings(settings);
 
       if (!success) {
@@ -1963,6 +2443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/settings/test-email", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const { enabled, host, port, secure, user, password } = req.body;
 
       if (!enabled) {
@@ -1989,6 +2470,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           accountSid: "",
           authToken: "",
           phoneNumber: ""
+        },
+        whatsappEnabled: false,
+        whatsappConfig: {
+          phoneNumberId: "",
+          accessToken: ""
         }
       };
 
@@ -2030,6 +2516,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/settings/test-sms", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const { enabled, accountSid, authToken, phoneNumber } = req.body;
 
       if (!enabled) {
@@ -2061,6 +2548,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           accountSid,
           authToken,
           phoneNumber
+        },
+        whatsappEnabled: false,
+        whatsappConfig: {
+          phoneNumberId: "",
+          accessToken: ""
         }
       };
 
@@ -2070,7 +2562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Attempt to send a test SMS
       const success = await notificationService.sendSMS(
         phoneNumber, // Send to the same phone number
-        "Test SMS from Parazelsus Gate Pass System"
+        "Test SMS from AGP Limited Gate Pass System"
       );
 
       if (success) {
@@ -2086,6 +2578,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/settings/test-whatsapp", async (req: Request, res: Response) => {
     try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
       const { enabled, phoneNumberId, accessToken, testNumber } = req.body;
 
       if (!enabled) {
@@ -2308,6 +2801,191 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error("Error running overdue check:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // =============================================
+  // Phase 12: Batch Gate Pass Operations
+  // =============================================
+
+  // POST /api/gate-passes/batch-approve  — body: { ids: number[], userId: number }
+  app.post("/api/gate-passes/batch-approve", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { ids } = req.body as { ids?: number[] };
+      const userId = req.session.userId;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
+
+      const actor = await storage.getUser(userId);
+      const results: { id: number; success: boolean; error?: string }[] = [];
+
+      for (const id of ids) {
+        try {
+          const gp = await storage.getGatePass(id);
+          if (!gp) { results.push({ id, success: false, error: "Not found" }); continue; }
+          if (gp.status !== "pending") { results.push({ id, success: false, error: `Status is ${gp.status}` }); continue; }
+
+          await storage.updateGatePass(id, {
+            status: "approved",
+            approvedBy: userId,
+            approvedAt: new Date(),
+            hodApprovedBy: userId,
+            hodApprovedAt: new Date(),
+          } as any);
+
+          notificationService.notifyInitiatorOfHodDecision(gp, "approved", actor?.fullName || "Approver").catch(() => {});
+          notificationService.notifySecurityOfApprovedPass(gp).catch(() => {});
+          await storage.logUserActivity({
+            userId, userEmail: actor?.email || "unknown",
+            actionType: "approve", entityType: "gate_pass", entityId: id,
+            description: `[Batch] Approved gate pass #${gp.gatePassNumber}`,
+            ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
+          }).catch(() => {});
+
+          results.push({ id, success: true });
+        } catch (e: any) {
+          results.push({ id, success: false, error: e.message });
+        }
+      }
+
+      const succeeded = results.filter(r => r.success).length;
+      return res.json({ message: `Approved ${succeeded} of ${ids.length} gate passes`, results });
+    } catch (error) {
+      console.error("Batch approve error:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST /api/gate-passes/batch-reject  — body: { ids: number[], userId: number, remarks: string }
+  app.post("/api/gate-passes/batch-reject", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { ids, remarks } = req.body as { ids?: number[]; remarks?: string };
+      const userId = req.session.userId;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
+
+      const actor = await storage.getUser(userId);
+      const results: { id: number; success: boolean; error?: string }[] = [];
+
+      for (const id of ids) {
+        try {
+          const gp = await storage.getGatePass(id);
+          if (!gp) { results.push({ id, success: false, error: "Not found" }); continue; }
+          if (["completed", "rejected"].includes(gp.status)) { results.push({ id, success: false, error: `Status is ${gp.status}` }); continue; }
+
+          await storage.updateGatePass(id, { status: "rejected", remarks: remarks || null } as any);
+
+          notificationService.notifyInitiatorOfHodDecision(gp, "rejected", actor?.fullName || "HOD", remarks).catch(() => {});
+          await storage.logUserActivity({
+            userId, userEmail: actor?.email || "unknown",
+            actionType: "reject", entityType: "gate_pass", entityId: id,
+            description: `[Batch] Rejected gate pass #${gp.gatePassNumber}`,
+            ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
+          }).catch(() => {});
+
+          results.push({ id, success: true });
+        } catch (e: any) {
+          results.push({ id, success: false, error: e.message });
+        }
+      }
+
+      const succeeded = results.filter(r => r.success).length;
+      return res.json({ message: `Rejected ${succeeded} of ${ids.length} gate passes`, results });
+    } catch (error) {
+      console.error("Batch reject error:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST /api/gate-passes/batch-send-back  — body: { ids: number[], userId: number, remarks: string }
+  app.post("/api/gate-passes/batch-send-back", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { ids, remarks } = req.body as { ids?: number[]; remarks?: string };
+      const userId = req.session.userId;
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids array required" });
+      if (!remarks || !remarks.trim()) return res.status(400).json({ message: "remarks required for send-back" });
+
+      const actor = await storage.getUser(userId);
+      const results: { id: number; success: boolean; error?: string }[] = [];
+
+      for (const id of ids) {
+        try {
+          const gp = await storage.getGatePass(id);
+          if (!gp) { results.push({ id, success: false, error: "Not found" }); continue; }
+          if (gp.status !== "pending") { results.push({ id, success: false, error: `Status is ${gp.status}` }); continue; }
+
+          await storage.updateGatePass(id, { status: "sent_back", remarks: remarks.trim() } as any);
+
+          notificationService.notifyInitiatorOfHodDecision(gp, "sent_back", actor?.fullName || "HOD", remarks).catch(() => {});
+          await storage.logUserActivity({
+            userId, userEmail: actor?.email || "unknown",
+            actionType: "send_back", entityType: "gate_pass", entityId: id,
+            description: `[Batch] Sent back gate pass #${gp.gatePassNumber}: ${remarks}`,
+            ipAddress: getIpAddresses(req), userAgent: req.headers["user-agent"] || "unknown",
+          }).catch(() => {});
+
+          results.push({ id, success: true });
+        } catch (e: any) {
+          results.push({ id, success: false, error: e.message });
+        }
+      }
+
+      const succeeded = results.filter(r => r.success).length;
+      return res.json({ message: `Sent back ${succeeded} of ${ids.length} gate passes`, results });
+    } catch (error) {
+      console.error("Batch send-back error:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // =============================================
+  // Phase 9: In-App Notification Center
+  // =============================================
+
+  // GET /api/notifications — fetch notifications for the logged-in user
+  app.get("/api/notifications", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const notifs = await storage.getNotifications(req.session.userId, limit);
+      return res.json(notifs);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // GET /api/notifications/unread-count — fast badge count
+  app.get("/api/notifications/unread-count", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const count = await storage.getUnreadNotificationCount(req.session.userId);
+      return res.json({ count });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // PATCH /api/notifications/:id/read — mark single notification as read
+  app.patch("/api/notifications/:id/read", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      await storage.markNotificationRead(parseInt(req.params.id), req.session.userId);
+      return res.json({ success: true });
+    } catch (error) {
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // PATCH /api/notifications/read-all — mark all notifications as read
+  app.patch("/api/notifications/read-all", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      await storage.markAllNotificationsRead(req.session.userId);
+      return res.json({ success: true });
+    } catch (error) {
       return res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -2553,7 +3231,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.get("/api/plants", async (req: Request, res: Response) => {
       try {
         const companyId = req.query.companyId ? Number(req.query.companyId) : undefined;
-        const rows = await storage.getPlants(companyId);
+        let rows = await storage.getPlants(companyId);
+
+        // If not admin, filter to only the user's assigned plants (if any assignments exist)
+        const userId = req.session?.userId;
+        if (userId) {
+          const { userPlants: uPlantsTable, userCompanies: uCompaniesTable } = await import("@shared/schema");
+          const isGroupAdmin = req.session?.userRole === 1;
+          if (!isGroupAdmin) {
+            const userPlantRows = await db.select().from(uPlantsTable).where(eq(uPlantsTable.userId, userId));
+            if (userPlantRows.length > 0) {
+              const assignedPlantIds = new Set(userPlantRows.map(r => r.plantId));
+              rows = rows.filter(p => assignedPlantIds.has(p.id));
+            }
+          }
+        }
+
         return res.json(rows);
       } catch (error) {
         console.error("Error fetching plants:", error);
@@ -2573,6 +3266,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post("/api/plants", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const { name, companyId, description } = req.body;
         if (!name || !companyId) return res.status(400).json({ message: "name and companyId are required" });
         const row = await storage.createPlant({ name: name.trim(), companyId: Number(companyId), description: description?.trim() || null, active: true });
@@ -2586,6 +3280,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.patch("/api/plants/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const row = await storage.updatePlant(Number(req.params.id), req.body);
         if (!row) return res.status(404).json({ message: "Plant not found" });
         return res.json(row);
@@ -2596,6 +3291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.delete("/api/plants/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         await storage.deletePlant(Number(req.params.id));
         return res.json({ success: true });
       } catch (error) {
@@ -2609,7 +3305,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const companyId = req.query.companyId ? Number(req.query.companyId) : undefined;
         const plantId = req.query.plantId ? Number(req.query.plantId) : undefined;
-        const rows = await storage.getGates(companyId, plantId);
+        let rows = await storage.getGates(companyId, plantId);
+
+        // If not admin, filter to only the user's assigned gates (if any assignments exist)
+        const userId = req.session?.userId;
+        if (userId) {
+          const { userGates: uGatesTable } = await import("@shared/schema");
+          const isGroupAdmin = req.session?.userRole === 1;
+          if (!isGroupAdmin) {
+            const userGateRows = await db.select().from(uGatesTable).where(eq(uGatesTable.userId, userId));
+            if (userGateRows.length > 0) {
+              const assignedGateIds = new Set(userGateRows.map(r => r.gateId));
+              rows = rows.filter(g => assignedGateIds.has(g.id));
+            }
+          }
+        }
+
         return res.json(rows);
       } catch (error) {
         console.error("Error fetching gates:", error);
@@ -2629,6 +3340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post("/api/gates", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const { name, companyId, plantId, description } = req.body;
         if (!name || !companyId) return res.status(400).json({ message: "name and companyId are required" });
         const row = await storage.createGate({ name: name.trim(), companyId: Number(companyId), plantId: plantId ? Number(plantId) : null, description: description?.trim() || null, active: true });
@@ -2641,6 +3353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.patch("/api/gates/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const row = await storage.updateGate(Number(req.params.id), req.body);
         if (!row) return res.status(404).json({ message: "Gate not found" });
         return res.json(row);
@@ -2651,6 +3364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.delete("/api/gates/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         await storage.deleteGate(Number(req.params.id));
         return res.json({ success: true });
       } catch (error) {
@@ -2683,6 +3397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post("/api/vendors", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const { name, companyId, code, phone, email, address, sapCode } = req.body;
         if (!name || !companyId) return res.status(400).json({ message: "name and companyId are required" });
         const row = await storage.createVendor({ name: name.trim(), companyId: Number(companyId), code: code?.trim() || null, phone: phone?.trim() || null, email: email?.trim() || null, address: address?.trim() || null, sapCode: sapCode?.trim() || null, active: true });
@@ -2695,6 +3410,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.patch("/api/vendors/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const row = await storage.updateVendor(Number(req.params.id), req.body);
         if (!row) return res.status(404).json({ message: "Vendor not found" });
         return res.json(row);
@@ -2705,6 +3421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.delete("/api/vendors/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         await storage.deleteVendor(Number(req.params.id));
         return res.json({ success: true });
       } catch (error) {
@@ -2738,6 +3455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.post("/api/item-master", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const { name, companyId, code, type, plantId, unit } = req.body;
         if (!name || !companyId) return res.status(400).json({ message: "name and companyId are required" });
         const row = await storage.createItemMaster({ name: name.trim(), companyId: Number(companyId), code: code?.trim() || null, type: type?.trim() || null, plantId: plantId ? Number(plantId) : null, unit: unit?.trim() || null, active: true });
@@ -2750,6 +3468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.patch("/api/item-master/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         const row = await storage.updateItemMaster(Number(req.params.id), req.body);
         if (!row) return res.status(404).json({ message: "Item not found" });
         return res.json(row);
@@ -2760,6 +3479,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     app.delete("/api/item-master/:id", async (req: Request, res: Response) => {
       try {
+        if (!req.session?.userId) return res.status(401).json({ message: "Unauthorized" });
         await storage.deleteItemMaster(Number(req.params.id));
         return res.json({ success: true });
       } catch (error) {
@@ -2920,6 +3640,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(rows);
     } catch (error) {
       console.error("Error fetching gate pass approvals:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ================================================================
+  // Phase 17: Force Close
+  // ================================================================
+
+  // POST /api/gate-passes/:id/force-close
+  app.post("/api/gate-passes/:id/force-close", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const id = parseInt(req.params.id, 10);
+      const { remarks } = req.body;
+
+      if (!remarks || !String(remarks).trim()) {
+        return res.status(400).json({ message: "Remarks are required to force close a gate pass" });
+      }
+
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Not authenticated" });
+
+      // Only admins or users with gatePass:manage permission can force close
+      const isAdmin = user.roleId === 1;
+      if (!isAdmin) {
+        const userPerms = user.roleId
+          ? await db.select().from(permissions).where(eq(permissions.roleId, user.roleId))
+          : [];
+        const canManage = userPerms.some(
+          (p) => p.module === "gatePass" && p.action === "manage"
+        );
+        if (!canManage) return res.status(403).json({ message: "Insufficient permissions" });
+      }
+
+      const gatePass = await storage.getGatePass(id);
+      if (!gatePass) return res.status(404).json({ message: "Gate pass not found" });
+
+      // Cannot force close already terminal passes
+      const terminalStatuses = ["completed", "rejected", "force_closed"];
+      if (terminalStatuses.includes(gatePass.status)) {
+        return res.status(400).json({
+          message: `Cannot force close a gate pass that is already ${gatePass.status}`,
+        });
+      }
+
+      const now = new Date();
+      const sapCode = generateSapReferenceCode();
+      const updated = await storage.updateGatePass(id, {
+        status: "force_closed",
+        forceClosedBy: user.id,
+        forceClosedAt: now,
+        forceCloseRemarks: String(remarks).trim(),
+        sapReferenceCode: sapCode,
+      } as any);
+
+      // In-app notification to the creator
+      const creator = await storage.getUser(gatePass.createdById);
+      if (creator) {
+        await storage.createNotification({
+          userId: creator.id,
+          title: "Gate Pass Force Closed",
+          message: `Gate pass ${gatePass.gatePassNumber} has been force closed by ${user.fullName}. Reason: ${remarks}`,
+          type: "warning",
+          entityType: "gate_pass",
+          entityId: gatePass.id,
+          read: false,
+        });
+      }
+
+      // Activity log
+      await storage.logUserActivity({
+        userId: user.id,
+        userEmail: user.email,
+        actionType: "force_close",
+        entityType: "gate_pass",
+        entityId: gatePass.id,
+        description: `Force closed gate pass ${gatePass.gatePassNumber}. Reason: ${remarks}`,
+        ipAddress: req.ip || "",
+        userAgent: req.headers["user-agent"] || "",
+      });
+
+      return res.json(updated);
+    } catch (error) {
+      console.error("Error force closing gate pass:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ================================================================
+  // Report Template routes
+  // ================================================================
+
+  // GET /api/report-templates — list own + shared company templates
+  app.get("/api/report-templates", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Not authenticated" });
+      const templates = await storage.getReportTemplates(user.id, user.companyId ?? undefined);
+      // Ensure config is always a parsed object (MySQL2 may return JSON columns as strings)
+      const normalized = templates.map(t => ({
+        ...t,
+        config: typeof t.config === "string" ? JSON.parse(t.config as string) : t.config,
+      }));
+      return res.json(normalized);
+    } catch (error) {
+      console.error("Error fetching report templates:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST /api/report-templates — create a new template
+  app.post("/api/report-templates", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const user = await storage.getUser(req.session.userId);
+      if (!user) return res.status(401).json({ message: "Not authenticated" });
+
+      const parsed = insertReportTemplateSchema.safeParse({
+        ...req.body,
+        userId: user.id,
+        companyId: req.body.companyId ?? user.companyId ?? null,
+      });
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.flatten() });
+      }
+
+      const template = await storage.createReportTemplate(parsed.data);
+      return res.status(201).json(template);
+    } catch (error) {
+      console.error("Error creating report template:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // PATCH /api/report-templates/:id — update (owner only)
+  app.patch("/api/report-templates/:id", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getReportTemplate(id);
+      if (!existing) return res.status(404).json({ message: "Template not found" });
+      if (existing.userId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
+
+      const updated = await storage.updateReportTemplate(id, req.body);
+      return res.json(updated);
+    } catch (error) {
+      console.error("Error updating report template:", error);
+      return res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // DELETE /api/report-templates/:id — delete (owner only)
+  app.delete("/api/report-templates/:id", async (req: Request, res: Response) => {
+    try {
+      if (!req.session?.userId) return res.status(401).json({ message: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getReportTemplate(id);
+      if (!existing) return res.status(404).json({ message: "Template not found" });
+      if (existing.userId !== req.session.userId) return res.status(403).json({ message: "Forbidden" });
+
+      const deleted = await storage.deleteReportTemplate(id);
+      return res.json({ success: deleted });
+    } catch (error) {
+      console.error("Error deleting report template:", error);
       return res.status(500).json({ message: "Internal server error" });
     }
   });

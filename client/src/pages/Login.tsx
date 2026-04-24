@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { companyName, companyLogo } from "@/config/company";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, LoginInput } from "@shared/schema";
@@ -217,7 +218,12 @@ export default function Login() {
       <div className="max-w-md w-full px-6">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-primary">Parazelsus Pakistan</h1>
+          <img
+            src={companyLogo.full}
+            alt={`${companyName} Logo`}
+            className="mx-auto mb-4 h-16 object-contain"
+          />
+          <h1 className="text-2xl font-bold text-primary">{companyName}</h1>
           <p className="text-neutral-gray mt-2">Gate Pass Management System</p>
         </div>
 
@@ -246,7 +252,7 @@ export default function Login() {
                         <FormLabel>Company Email</FormLabel>
                         <FormControl>
                           <Input
-                            placeholder="example@parazelsus.pk"
+                            placeholder="example@agp.com.pk"
                             {...field}
                             disabled={isLoading}
                           />
@@ -355,9 +361,15 @@ export default function Login() {
         <div className="text-center mt-6 text-sm text-neutral-gray">
           <p>
             Having trouble? Contact IT Support at{" "}
-            <a href="mailto:it.support@parazelsus.pk" className="text-primary">
-              it.support@parazelsus.pk
+            <a href="mailto:it.support@agp.com.pk" className="text-primary">
+              it.support@agp.com.pk
             </a>
+          </p>
+        </div>
+
+        <div className="text-center mt-4">
+          <p className="text-xs text-neutral-gray/60">
+            Developed by <span className="font-semibold text-neutral-gray/80">Creative Solution Zone</span>
           </p>
         </div>
       </div>

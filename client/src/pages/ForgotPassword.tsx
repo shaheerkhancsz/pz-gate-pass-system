@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLocation } from "wouter";
+import { companyName, companyLogo } from "@/config/company";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
@@ -63,7 +64,12 @@ export default function ForgotPassword() {
     <div className="fixed inset-0 bg-white z-50 flex items-center justify-center">
       <div className="max-w-md w-full px-6">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-primary">Parazelsus Pakistan</h1>
+          <img
+            src={companyLogo.full}
+            alt={`${companyName} Logo`}
+            className="mx-auto mb-4 h-16 object-contain"
+          />
+          <h1 className="text-2xl font-bold text-primary">{companyName}</h1>
           <p className="text-neutral-gray mt-2">Gate Pass Management System</p>
         </div>
         
@@ -81,7 +87,7 @@ export default function ForgotPassword() {
                     <FormLabel>Company Email</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="example@parazelsus.pk"
+                        placeholder="example@agp.com.pk"
                         {...field}
                         disabled={isLoading}
                       />
@@ -128,8 +134,8 @@ export default function ForgotPassword() {
         <div className="text-center mt-6 text-sm text-neutral-gray">
           <p>
             Having trouble? Contact IT Support at{" "}
-            <a href="mailto:it.support@parazelsus.pk" className="text-primary">
-              it.support@parazelsus.pk
+            <a href="mailto:it.support@agp.com.pk" className="text-primary">
+              it.support@agp.com.pk
             </a>
           </p>
         </div>

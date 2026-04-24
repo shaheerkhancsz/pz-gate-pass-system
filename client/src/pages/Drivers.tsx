@@ -1,425 +1,365 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { z } from "zod";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatPhoneNumber, formatCNIC } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from "@/components/ui/form";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useAuth } from "@/contexts/AuthContext";
 import { type Driver } from "@shared/schema";
-import { PlusCircle, Search, Edit } from "lucide-react";
-import { formatCNIC, validateCNIC, formatPhoneNumber, validatePhoneNumber } from "@/lib/utils";
+import { Truck, Plus, Pencil, Loader2 } from "lucide-react";
 
-// Define a simplified schema for the form
-const formSchema = z.object({
-  name: z.string().min(1, "Driver name is required"),
-  mobile: z.string()
-    .min(1, "Mobile number is required")
-    .refine(validatePhoneNumber, {
-      message: "Please enter a valid mobile number",
-    }),
-  cnic: z.string()
-    .min(1, "CNIC is required")
-    .refine(validateCNIC, {
-      message: "Please enter a valid CNIC number (e.g., 42201-1234567-8)",
-    }),
-  vehicleNumber: z.string().optional(),
-});
+interface Company {
+  id: number;
+  name: string;
+  shortName?: string;
+  active?: boolean;
+}
 
-type FormData = z.infer<typeof formSchema>;
+interface DriverForm {
+  name: string;
+  code: string;
+  mobile: string;
+  cnic: string;
+  vehicleNumber: string;
+  email: string;
+  sapId: string;
+}
+
+const emptyForm: DriverForm = {
+  name: "", code: "", mobile: "", cnic: "", vehicleNumber: "", email: "", sapId: "",
+};
 
 export default function Drivers() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [searchTerm, setSearchTerm] = useState("");
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
-  const [cnicInput, setCnicInput] = useState("");
-  const [mobileInput, setMobileInput] = useState("");
+  const { isAdmin, user } = useAuth();
 
-  const form = useForm<FormData>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: "",
-      mobile: "",
-      cnic: "",
-      vehicleNumber: "",
-    },
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Driver | null>(null);
+  const [form, setForm] = useState<DriverForm>(emptyForm);
+
+  // Fetch companies (admin sees all; non-admins use their own companyId)
+  const { data: companies = [] } = useQuery<Company[]>({
+    queryKey: ["companies"],
+    queryFn: () => fetch("/api/companies", { credentials: "include" }).then(r => r.json()),
+    enabled: isAdmin,
   });
 
-  const editForm = useForm<FormData>({
-    resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: "",
-      mobile: "",
-      cnic: "",
-      vehicleNumber: "",
+  React.useEffect(() => {
+    if (isAdmin) {
+      if (companies.length > 0 && selectedCompanyId === null) {
+        const active = companies.find(c => c.active !== false) ?? companies[0];
+        setSelectedCompanyId(active.id);
+      }
+    } else if (user?.companyId) {
+      setSelectedCompanyId(user.companyId);
+    }
+  }, [companies, isAdmin, user, selectedCompanyId]);
+
+  const effectiveCompanyId = isAdmin ? selectedCompanyId : (user?.companyId ?? null);
+
+  // Fetch drivers for the selected company
+  const { data: driverList = [], isLoading } = useQuery<Driver[]>({
+    queryKey: ["drivers", effectiveCompanyId],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (effectiveCompanyId) params.set("companyId", String(effectiveCompanyId));
+      return fetch(`/api/drivers?${params}`, { credentials: "include" }).then(r => r.json());
     },
+    enabled: effectiveCompanyId !== null,
   });
 
-  // Query to get drivers
-  const { data: drivers = [], isLoading } = useQuery({
-    queryKey: ["/api/drivers", searchTerm],
-    queryFn: async () => {
-      const params = searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : "";
-      const res = await fetch(`/api/drivers${params}`);
-      if (!res.ok) throw new Error("Failed to fetch drivers");
-      return res.json();
-    },
-  });
+  const filtered = driverList.filter(d =>
+    d.name.toLowerCase().includes(search.toLowerCase()) ||
+    d.cnic.toLowerCase().includes(search.toLowerCase()) ||
+    d.mobile.toLowerCase().includes(search.toLowerCase()) ||
+    ((d as any).code ?? "").toLowerCase().includes(search.toLowerCase())
+  );
 
-  // Mutation to create driver
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["drivers"] });
+
   const createMutation = useMutation({
-    mutationFn: (data: FormData) => {
-      return fetch("/api/drivers", {
+    mutationFn: (data: DriverForm) =>
+      fetch("/api/drivers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }).then(res => {
-        if (!res.ok) throw new Error("Failed to add driver");
-        return res.json();
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/drivers"] });
-      toast({
-        title: "Success",
-        description: "Driver added successfully",
-      });
-      setIsAddDialogOpen(false);
-      form.reset();
-      setCnicInput("");
-      setMobileInput("");
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: "Failed to add driver",
-        variant: "destructive",
-      });
-      console.error("Failed to add driver:", error);
-    },
+        credentials: "include",
+        body: JSON.stringify({ ...data, companyId: effectiveCompanyId }),
+      }).then(async r => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.message || "Failed to create driver");
+        return json;
+      }),
+    onSuccess: () => { toast({ title: "Driver created" }); invalidate(); closeDialog(); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  // Mutation to update driver
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: FormData }) => {
-      return fetch(`/api/drivers/${id}`, {
+    mutationFn: ({ id, data }: { id: number; data: DriverForm }) =>
+      fetch(`/api/drivers/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(data),
-      }).then(res => {
-        if (!res.ok) throw new Error("Failed to update driver");
-        return res.json();
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/drivers"] });
-      toast({
-        title: "Success",
-        description: "Driver updated successfully",
-      });
-      setSelectedDriver(null);
-      setCnicInput("");
-      setMobileInput("");
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: "Failed to update driver",
-        variant: "destructive",
-      });
-      console.error("Failed to update driver:", error);
-    },
+      }).then(async r => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.message || "Failed to update driver");
+        return json;
+      }),
+    onSuccess: () => { toast({ title: "Driver updated" }); invalidate(); closeDialog(); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const onSubmit = (data: FormData) => {
-    createMutation.mutate(data);
-  };
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, active }: { id: number; active: boolean }) =>
+      fetch(`/api/drivers/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ active }),
+      }).then(r => r.json()),
+    onSuccess: () => { toast({ title: "Driver status updated" }); invalidate(); },
+    onError: () => toast({ title: "Error", description: "Failed to update status", variant: "destructive" }),
+  });
 
-  const onUpdate = (data: FormData) => {
-    if (selectedDriver) {
-      updateMutation.mutate({ id: selectedDriver.id, data });
-    }
-  };
-
-  const handleEditDriver = (driver: Driver) => {
-    setSelectedDriver(driver);
-    editForm.reset({
-      name: driver.name,
-      mobile: driver.mobile,
-      cnic: driver.cnic,
-      vehicleNumber: driver.vehicleNumber || "",
+  const openCreate = () => { setEditTarget(null); setForm(emptyForm); setDialogOpen(true); };
+  const openEdit = (d: Driver) => {
+    setEditTarget(d);
+    setForm({
+      name: d.name,
+      code: (d as any).code ?? "",
+      mobile: d.mobile,
+      cnic: d.cnic,
+      vehicleNumber: d.vehicleNumber ?? "",
+      email: (d as any).email ?? "",
+      sapId: d.sapId ?? "",
     });
-    setCnicInput(driver.cnic);
-    setMobileInput(driver.mobile);
+    setDialogOpen(true);
+  };
+  const closeDialog = () => { setDialogOpen(false); setEditTarget(null); setForm(emptyForm); };
+
+  const handleSave = () => {
+    if (!form.name.trim()) { toast({ title: "Name is required", variant: "destructive" }); return; }
+    if (!form.mobile.trim()) { toast({ title: "Mobile is required", variant: "destructive" }); return; }
+    if (!form.cnic.trim()) { toast({ title: "CNIC is required", variant: "destructive" }); return; }
+    if (editTarget) updateMutation.mutate({ id: editTarget.id, data: form });
+    else createMutation.mutate(form);
   };
 
-  const handleCnicChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatCNIC(e.target.value);
-    setCnicInput(formatted);
-    form.setValue("cnic", formatted);
-  };
-
-  const handleEditCnicChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatCNIC(e.target.value);
-    setCnicInput(formatted);
-    editForm.setValue("cnic", formatted);
-  };
-
-  const handleMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatPhoneNumber(e.target.value);
-    setMobileInput(formatted);
-    form.setValue("mobile", formatted);
-  };
-
-  const handleEditMobileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const formatted = formatPhoneNumber(e.target.value);
-    setMobileInput(formatted);
-    editForm.setValue("mobile", formatted);
-  };
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const selectedCompany = companies.find(c => c.id === selectedCompanyId);
 
   return (
     <AppLayout>
-      <div className="container mx-auto p-6">
-        <h1 className="text-2xl font-bold mb-6">Driver Management</h1>
-        
-        <Card className="mb-6">
-          <CardHeader className="pb-3">
-            <div className="flex justify-between items-center">
-              <CardTitle>Drivers</CardTitle>
-              <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <PlusCircle className="mr-2 h-4 w-4" />
-                    Add Driver
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add New Driver</DialogTitle>
-                  </DialogHeader>
-                  <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="name"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Driver name" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="mobile"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Mobile</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="03xx-xxxxxxx"
-                                value={mobileInput}
-                                onChange={handleMobileChange}
-                                onBlur={field.onBlur}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="cnic"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>CNIC</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="xxxxx-xxxxxxx-x"
-                                value={cnicInput}
-                                onChange={handleCnicChange}
-                                onBlur={field.onBlur}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="vehicleNumber"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Vehicle Number</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Vehicle registration number" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <DialogFooter>
-                        <Button type="submit" disabled={createMutation.isPending}>
-                          {createMutation.isPending ? "Saving..." : "Save Driver"}
-                        </Button>
-                      </DialogFooter>
-                    </form>
-                  </Form>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <CardDescription>
-              Manage your drivers database
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center mb-4">
-              <div className="relative w-full max-w-sm">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  type="search"
-                  placeholder="Search drivers..."
-                  className="pl-8"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-            </div>
+      <div className="container mx-auto p-6 space-y-6">
 
-            {isLoading ? (
-              <div className="text-center py-8">Loading drivers...</div>
-            ) : drivers.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-muted-foreground">No drivers found.</p>
-              </div>
-            ) : (
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Mobile</TableHead>
-                      <TableHead>CNIC</TableHead>
-                      <TableHead>Vehicle Number</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {drivers.map((driver: Driver) => (
-                      <TableRow key={driver.id}>
-                        <TableCell className="font-medium">{driver.name}</TableCell>
-                        <TableCell>{driver.mobile}</TableCell>
-                        <TableCell>{driver.cnic}</TableCell>
-                        <TableCell>{driver.vehicleNumber || "-"}</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditDriver(driver)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Truck className="h-6 w-6 text-primary" />
+            <div>
+              <h2 className="text-xl font-semibold">Drivers</h2>
+              <p className="text-sm text-muted-foreground">Manage drivers and vehicle operators per company.</p>
+            </div>
+          </div>
+          <Button onClick={openCreate} disabled={!effectiveCompanyId} className="bg-primary text-white">
+            <Plus className="h-4 w-4 mr-1" /> Add Driver
+          </Button>
+        </div>
 
-        {/* Edit Driver Dialog */}
-        {selectedDriver && (
-          <Dialog open={!!selectedDriver} onOpenChange={(open) => !open && setSelectedDriver(null)}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Edit Driver</DialogTitle>
-              </DialogHeader>
-              <Form {...editForm}>
-                <form onSubmit={editForm.handleSubmit(onUpdate)} className="space-y-4">
-                  <FormField
-                    control={editForm.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Name</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Driver name" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={editForm.control}
-                    name="mobile"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mobile</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="03xx-xxxxxxx"
-                            value={mobileInput}
-                            onChange={handleEditMobileChange}
-                            onBlur={field.onBlur}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={editForm.control}
-                    name="cnic"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>CNIC</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="xxxxx-xxxxxxx-x"
-                            value={cnicInput}
-                            onChange={handleEditCnicChange}
-                            onBlur={field.onBlur}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={editForm.control}
-                    name="vehicleNumber"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Vehicle Number</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Vehicle registration number" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <DialogFooter>
-                    <Button type="submit" disabled={updateMutation.isPending}>
-                      {updateMutation.isPending ? "Updating..." : "Update Driver"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
+        {/* Company selector — admin only, when multiple companies */}
+        {isAdmin && companies.length > 1 && (
+          <div className="flex flex-wrap gap-2">
+            {companies.map(c => (
+              <Button
+                key={c.id}
+                variant={selectedCompanyId === c.id ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedCompanyId(c.id)}
+                className={selectedCompanyId === c.id ? "bg-primary text-white" : ""}
+              >
+                {c.shortName || c.name}
+              </Button>
+            ))}
+          </div>
         )}
+
+        {/* Search */}
+        <div>
+          <Input
+            placeholder="Search by name, CNIC, mobile, or code…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
+
+        {/* Table */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground border rounded-lg">
+            <Truck className="h-10 w-10 mx-auto mb-2 opacity-30" />
+            <p className="font-medium">{driverList.length === 0 ? "No drivers yet." : "No results match your search."}</p>
+            {isAdmin && selectedCompany && (
+              <p className="text-sm mt-1">Company: {selectedCompany.name}</p>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Mobile</TableHead>
+                  <TableHead>CNIC</TableHead>
+                  <TableHead>Vehicle No.</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>SAP Code</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map(driver => (
+                  <TableRow key={driver.id}>
+                    <TableCell>
+                      {(driver as any).code
+                        ? <Badge variant="outline">{(driver as any).code}</Badge>
+                        : <span className="text-muted-foreground text-sm">—</span>}
+                    </TableCell>
+                    <TableCell className="font-medium">{driver.name}</TableCell>
+                    <TableCell>{driver.mobile}</TableCell>
+                    <TableCell>{driver.cnic}</TableCell>
+                    <TableCell>{driver.vehicleNumber || <span className="text-muted-foreground text-sm">—</span>}</TableCell>
+                    <TableCell>{(driver as any).email || <span className="text-muted-foreground text-sm">—</span>}</TableCell>
+                    <TableCell>{driver.sapId || <span className="text-muted-foreground text-sm">—</span>}</TableCell>
+                    <TableCell>
+                      <Badge variant={(driver as any).active !== false ? "default" : "secondary"}>
+                        {(driver as any).active !== false ? "Active" : "Inactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(driver)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleMutation.mutate({ id: driver.id, active: (driver as any).active === false })}
+                          disabled={toggleMutation.isPending}
+                        >
+                          {(driver as any).active !== false ? "Deactivate" : "Activate"}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {/* Add / Edit Dialog */}
+        <Dialog open={dialogOpen} onOpenChange={v => !v && closeDialog()}>
+          <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{editTarget ? "Edit Driver" : "Add Driver"}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5 col-span-2">
+                  <label className="text-sm font-medium">Driver Name *</label>
+                  <Input
+                    placeholder="e.g. Muhammad Ali"
+                    value={form.name}
+                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Code</label>
+                  <Input
+                    placeholder="e.g. DRV-001"
+                    value={form.code}
+                    onChange={e => setForm(f => ({ ...f, code: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">SAP Code</label>
+                  <Input
+                    placeholder="e.g. 300001"
+                    value={form.sapId}
+                    onChange={e => setForm(f => ({ ...f, sapId: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Mobile *</label>
+                  <Input
+                    placeholder="e.g. 0312-1234567"
+                    value={form.mobile}
+                    onChange={e => setForm(f => ({ ...f, mobile: formatPhoneNumber(e.target.value) }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">CNIC *</label>
+                  <Input
+                    placeholder="e.g. 42201-1234567-8"
+                    value={form.cnic}
+                    onChange={e => setForm(f => ({ ...f, cnic: formatCNIC(e.target.value) }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Vehicle Number</label>
+                  <Input
+                    placeholder="e.g. KHI-1234"
+                    value={form.vehicleNumber}
+                    onChange={e => setForm(f => ({ ...f, vehicleNumber: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Email</label>
+                  <Input
+                    type="email"
+                    placeholder="e.g. driver@example.com"
+                    value={form.email}
+                    onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={closeDialog} disabled={isSaving}>Cancel</Button>
+              <Button onClick={handleSave} disabled={isSaving} className="bg-primary text-white">
+                {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                {editTarget ? "Save Changes" : "Create Driver"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </div>
     </AppLayout>
   );

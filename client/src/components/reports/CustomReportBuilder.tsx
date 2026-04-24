@@ -17,6 +17,34 @@ import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
 import { useDepartments } from "@/hooks/use-departments";
 import { formatDate } from "@/lib/utils";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+
+function getStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "Pending",
+    hod_approved: "HOD Approved",
+    security_allowed: "Security Allowed",
+    completed: "Completed",
+    rejected: "Rejected",
+    sent_back: "Sent Back",
+  };
+  return labels[status] || status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+}
+
+function getStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "completed": return "bg-success bg-opacity-10 text-success";
+    case "pending": return "bg-warning bg-opacity-10 text-warning";
+    case "hod_approved": return "bg-blue-100 text-blue-700";
+    case "security_allowed": return "bg-purple-100 text-purple-700";
+    case "rejected": return "bg-red-100 text-red-700";
+    case "sent_back": return "bg-orange-100 text-orange-700";
+    default: return "bg-info bg-opacity-10 text-info";
+  }
+}
 
 // Define the form schema
 const reportFormSchema = z.object({
@@ -44,6 +72,10 @@ const reportFormSchema = z.object({
       enabled: z.boolean().default(false),
       value: z.string().optional(),
     }),
+    type: z.object({
+      enabled: z.boolean().default(false),
+      value: z.string().optional(),
+    }),
     item: z.object({
       enabled: z.boolean().default(false),
       value: z.string().optional(),
@@ -52,6 +84,7 @@ const reportFormSchema = z.object({
   columns: z.object({
     gatePassNumber: z.boolean().default(true),
     date: z.boolean().default(true),
+    type: z.boolean().default(true),
     customer: z.boolean().default(true),
     department: z.boolean().default(true),
     driver: z.boolean().default(true),
@@ -73,8 +106,44 @@ export function CustomReportBuilder() {
   const [reportTab, setReportTab] = useState("design");
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [shareWithCompany, setShareWithCompany] = useState(false);
+  const [templatesExpanded, setTemplatesExpanded] = useState(true);
   const isMobile = useIsMobile();
   const { data: departments = [] } = useDepartments();
+  const queryClient = useQueryClient();
+
+  // Fetch saved templates from DB
+  const { data: savedTemplates = [] } = useQuery<any[]>({
+    queryKey: ["/api/report-templates"],
+  });
+
+  // Save template mutation
+  const saveMutation = useMutation({
+    mutationFn: (payload: { name: string; description?: string; config: any; isShared: boolean }) =>
+      apiRequest("POST", "/api/report-templates", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/report-templates"] });
+      setSaveDialogOpen(false);
+      setTemplatesExpanded(true);
+      toast({ title: "Template saved", description: "Your report template has been saved to the database." });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save the template. Please try again.", variant: "destructive" });
+    },
+  });
+
+  // Delete template mutation
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/report-templates/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/report-templates"] });
+      toast({ title: "Template deleted" });
+    },
+    onError: () => {
+      toast({ title: "Delete failed", description: "Could not delete the template.", variant: "destructive" });
+    },
+  });
 
   // Initialize form with default values
   const form = useForm<ReportFormValues>({
@@ -88,11 +157,13 @@ export function CustomReportBuilder() {
         department: { enabled: false, value: "" },
         driver: { enabled: false, value: "" },
         status: { enabled: false, value: "" },
+        type: { enabled: false, value: "" },
         item: { enabled: false, value: "" },
       },
       columns: {
         gatePassNumber: true,
         date: true,
+        type: true,
         customer: true,
         department: true,
         driver: true,
@@ -143,6 +214,10 @@ export function CustomReportBuilder() {
         queryParams.append("status", values.filters.status.value);
       }
 
+      if (values.filters.type.enabled && values.filters.type.value) {
+        queryParams.append("type", values.filters.type.value);
+      }
+
       if (values.filters.item.enabled && values.filters.item.value) {
         queryParams.append("itemName", values.filters.item.value);
       }
@@ -167,6 +242,7 @@ export function CustomReportBuilder() {
 
         if (values.columns.gatePassNumber) result.gatePassNumber = pass.gatePassNumber;
         if (values.columns.date) result.date = formatDate(pass.date);
+        if (values.columns.type) result.type = (pass.type || "outward").charAt(0).toUpperCase() + (pass.type || "outward").slice(1);
         if (values.columns.customer) result.customer = pass.customerName;
         if (values.columns.department) result.department = pass.department;
         if (values.columns.driver) result.driver = pass.driverName;
@@ -222,25 +298,36 @@ export function CustomReportBuilder() {
     }
   };
 
-  // Save the report template
-  const saveTemplate = (values: ReportFormValues) => {
-    // Get existing templates from localStorage
-    const savedTemplates = localStorage.getItem('reportTemplates');
-    const templates = savedTemplates ? JSON.parse(savedTemplates) : [];
+  // Load a saved template into the form
+  const loadTemplate = (template: any) => {
+    try {
+      const raw = template.config;
+      const config: ReportFormValues = typeof raw === "string" ? JSON.parse(raw) : raw;
+      form.reset(config);
+      setTemplatesExpanded(false);
+      toast({ title: "Template loaded", description: `"${template.name}" has been loaded.` });
+    } catch (err) {
+      console.error("Failed to load template:", err);
+      toast({ title: "Load failed", description: "Could not parse the template config.", variant: "destructive" });
+    }
+  };
 
-    // Add new template
-    templates.push({
-      id: Date.now(),
-      ...values,
-      createdAt: new Date().toISOString(),
-    });
+  // Open save dialog
+  const openSaveDialog = () => {
+    setSaveDialogOpen(true);
+  };
 
-    // Save back to localStorage
-    localStorage.setItem('reportTemplates', JSON.stringify(templates));
-
-    toast({
-      title: "Report template saved",
-      description: "Your report template has been saved for future use.",
+  // Confirm save from dialog
+  const confirmSave = () => {
+    const values = form.getValues();
+    const { name, description, ...rest } = values;
+    // Store everything except name/description in config
+    const config = values;
+    saveMutation.mutate({
+      name,
+      description,
+      config,
+      isShared: shareWithCompany,
     });
   };
 
@@ -291,6 +378,7 @@ export function CustomReportBuilder() {
 
     if (columns.gatePassNumber) tableHeaders.push("Gate Pass No.");
     if (columns.date) tableHeaders.push("Date");
+    if (columns.type) tableHeaders.push("Type");
     if (columns.customer) tableHeaders.push("Customer");
     if (columns.department) tableHeaders.push("Department");
     if (columns.driver) tableHeaders.push("Driver");
@@ -338,11 +426,12 @@ export function CustomReportBuilder() {
             const dataRow: any[] = [];
             if (columns.gatePassNumber) dataRow.push(previewData[i].gatePassNumber || "");
             if (columns.date) dataRow.push(previewData[i].date || "");
+            if (columns.type) dataRow.push(previewData[i].type || "");
             if (columns.customer) dataRow.push(previewData[i].customer || "");
             if (columns.department) dataRow.push(previewData[i].department || "");
             if (columns.driver) dataRow.push(previewData[i].driver || "");
             if (columns.vehicle) dataRow.push(previewData[i].vehicle || "");
-            if (columns.status) dataRow.push(previewData[i].status || "");
+            if (columns.status) dataRow.push(previewData[i].status ? getStatusLabel(previewData[i].status) : "");
             if (columns.createdBy) dataRow.push(previewData[i].createdBy || "");
             if (columns.createdAt) dataRow.push(previewData[i].createdAt || "");
             if (columns.notes) dataRow.push(previewData[i].notes || "");
@@ -375,6 +464,7 @@ export function CustomReportBuilder() {
   };
 
   return (
+    <>
     <Tabs value={reportTab} className="w-full">
       <Card className="bg-white rounded-lg shadow-sm mb-4">
         <CardHeader className="p-6 border-b border-neutral-medium">
@@ -410,6 +500,66 @@ export function CustomReportBuilder() {
             <Form {...form}>
               <form onSubmit={form.handleSubmit(previewReport)}>
                 <div className="space-y-6">
+
+                  {/* Saved Templates Section */}
+                  <div className="border rounded-md">
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-neutral-50"
+                      onClick={() => setTemplatesExpanded(v => !v)}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="material-icons text-sm">bookmark</span>
+                        Saved Templates {savedTemplates.length > 0 && `(${savedTemplates.length})`}
+                      </span>
+                      <span className="material-icons text-sm">
+                        {templatesExpanded ? "expand_less" : "expand_more"}
+                      </span>
+                    </button>
+                    {templatesExpanded && (
+                      <div className="border-t divide-y">
+                        {savedTemplates.length === 0 ? (
+                          <p className="px-4 py-3 text-sm text-neutral-gray">No saved templates yet.</p>
+                        ) : (
+                          savedTemplates.map((t: any) => (
+                            <div key={t.id} className="flex items-center justify-between px-4 py-3 gap-4">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">{t.name}</p>
+                                {t.description && (
+                                  <p className="text-xs text-neutral-gray truncate">{t.description}</p>
+                                )}
+                                <p className="text-xs text-neutral-gray">
+                                  {new Date(t.createdAt).toLocaleDateString()}
+                                  {t.isShared && <span className="ml-2 text-blue-600">Shared</span>}
+                                </p>
+                              </div>
+                              <div className="flex gap-2 shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => loadTemplate(t)}
+                                >
+                                  Load
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-600 hover:text-red-700"
+                                  onClick={() => deleteMutation.mutate(t.id)}
+                                  disabled={deleteMutation.isPending}
+                                >
+                                  <span className="material-icons text-sm">delete</span>
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <FormField
                       control={form.control}
@@ -675,9 +825,58 @@ export function CustomReportBuilder() {
                                     </SelectTrigger>
                                     <SelectContent>
                                       <SelectItem value="pending">Pending</SelectItem>
-                                      <SelectItem value="approved">Approved</SelectItem>
+                                      <SelectItem value="hod_approved">HOD Approved</SelectItem>
+                                      <SelectItem value="security_allowed">Security Allowed</SelectItem>
                                       <SelectItem value="completed">Completed</SelectItem>
                                       <SelectItem value="rejected">Rejected</SelectItem>
+                                      <SelectItem value="sent_back">Sent Back</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                              </FormItem>
+                            )}
+                          />
+                        )}
+                      </div>
+
+                      {/* Type Filter */}
+                      <div className="space-y-3">
+                        <FormField
+                          control={form.control}
+                          name="filters.type.enabled"
+                          render={({ field }) => (
+                            <FormItem className="flex items-center space-x-2">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                />
+                              </FormControl>
+                              <FormLabel className="text-sm font-medium !mt-0">
+                                Type
+                              </FormLabel>
+                            </FormItem>
+                          )}
+                        />
+
+                        {form.watch("filters.type.enabled") && (
+                          <FormField
+                            control={form.control}
+                            name="filters.type.value"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Select
+                                    value={field.value}
+                                    onValueChange={field.onChange}
+                                  >
+                                    <SelectTrigger className="w-full">
+                                      <SelectValue placeholder="Select type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="outward">Outward</SelectItem>
+                                      <SelectItem value="inward">Inward</SelectItem>
+                                      <SelectItem value="returnable">Returnable</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </FormControl>
@@ -763,6 +962,24 @@ export function CustomReportBuilder() {
                             </FormControl>
                             <FormLabel className="text-sm !mt-0">
                               Date
+                            </FormLabel>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="columns.type"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2">
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                            <FormLabel className="text-sm !mt-0">
+                              Type
                             </FormLabel>
                           </FormItem>
                         )}
@@ -1021,7 +1238,7 @@ export function CustomReportBuilder() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => saveTemplate(form.getValues())}
+                      onClick={openSaveDialog}
                     >
                       <span className="material-icons text-sm mr-2">save</span>
                       Save Template
@@ -1095,6 +1312,9 @@ export function CustomReportBuilder() {
                     {form.watch("columns.date") && (
                       <th className="px-4 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Date</th>
                     )}
+                    {form.watch("columns.type") && (
+                      <th className="px-4 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Type</th>
+                    )}
                     {form.watch("columns.customer") && (
                       <th className="px-4 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Customer</th>
                     )}
@@ -1144,6 +1364,9 @@ export function CustomReportBuilder() {
                           {form.watch("columns.date") && (
                             <td className="px-4 py-3 text-sm">{row.date}</td>
                           )}
+                          {form.watch("columns.type") && (
+                            <td className="px-4 py-3 text-sm capitalize">{row.type}</td>
+                          )}
                           {form.watch("columns.customer") && (
                             <td className="px-4 py-3 text-sm">{row.customer}</td>
                           )}
@@ -1159,15 +1382,8 @@ export function CustomReportBuilder() {
                           {form.watch("columns.status") && (
                             <td className="px-4 py-3 text-sm">
                               {row.status && (
-                                <span className={`px-2 py-1 text-xs rounded-full ${row.status === "completed"
-                                    ? "bg-success bg-opacity-10 text-success"
-                                    : row.status === "pending"
-                                      ? "bg-warning bg-opacity-10 text-warning"
-                                      : row.status === "approved"
-                                        ? "bg-info bg-opacity-10 text-info"
-                                        : "bg-error bg-opacity-10 text-error"
-                                  }`}>
-                                  {row.status.charAt(0).toUpperCase() + row.status.slice(1)}
+                                <span className={`px-2 py-1 text-xs rounded-full ${getStatusBadgeClass(row.status)}`}>
+                                  {getStatusLabel(row.status)}
                                 </span>
                               )}
                             </td>
@@ -1228,5 +1444,40 @@ export function CustomReportBuilder() {
         </div>
       </TabsContent>
     </Tabs>
+
+    {/* Save Template Dialog */}
+    <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Save Report Template</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <p className="text-sm text-neutral-gray">
+            Save the current report configuration as a reusable template.
+          </p>
+          <div className="space-y-1">
+            <Label className="text-sm font-medium">Template name</Label>
+            <p className="text-sm border rounded px-3 py-2 bg-neutral-50">{form.watch("name") || <span className="text-neutral-gray italic">Unnamed report</span>}</p>
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Share with company</p>
+              <p className="text-xs text-neutral-gray">Make this template visible to all users in your company</p>
+            </div>
+            <Switch
+              checked={shareWithCompany}
+              onCheckedChange={setShareWithCompany}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>Cancel</Button>
+          <Button onClick={confirmSave} disabled={saveMutation.isPending}>
+            {saveMutation.isPending ? "Saving..." : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

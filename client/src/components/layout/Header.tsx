@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NotificationBell } from "@/components/layout/NotificationBell";
 
 interface HeaderProps {
   onMobileMenuToggle: () => void;
@@ -30,13 +31,13 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
         </Button>
         
         <form onSubmit={handleSearch} className="relative w-full sm:w-56 md:w-64">
-          <span className="material-icons absolute left-2 sm:left-3 top-1/2 transform -translate-y-1/2 text-neutral-gray text-sm sm:text-base">
+          <span className="material-icons absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-gray text-base">
             search
           </span>
-          <Input 
+          <Input
             type="text"
             placeholder="Search..."
-            className="w-full pl-8 sm:pl-10 pr-2 sm:pr-4 py-1 sm:py-2 rounded-lg border border-neutral-medium text-sm"
+            className="w-full h-10 pl-10 pr-4 rounded-lg border border-neutral-medium text-sm"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -44,16 +45,7 @@ export function Header({ onMobileMenuToggle }: HeaderProps) {
       </div>
       
       <div className="flex items-center space-x-1 sm:space-x-2 md:space-x-4">
-        <Button 
-          variant="ghost" 
-          size="icon" 
-          className="relative"
-        >
-          <span className="material-icons text-sm sm:text-base">notifications</span>
-          <span className="absolute top-0 right-0 h-3 w-3 sm:h-4 sm:w-4 bg-secondary rounded-full text-white text-[0.65rem] sm:text-xs flex items-center justify-center">
-            3
-          </span>
-        </Button>
+        <NotificationBell />
         
         <Button 
           variant="ghost" 

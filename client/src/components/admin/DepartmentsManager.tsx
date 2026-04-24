@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
     Dialog,
     DialogContent,
@@ -20,20 +21,30 @@ interface Company {
     shortName?: string;
 }
 
+type ItemInputMode = "items" | "attachment" | "either";
+
 interface Department {
     id: number;
     companyId: number;
     name: string;
     description?: string | null;
     active: boolean;
+    itemInputMode?: ItemInputMode;
 }
 
 interface DeptForm {
     name: string;
     description: string;
+    itemInputMode: ItemInputMode;
 }
 
-const empty: DeptForm = { name: "", description: "" };
+const INPUT_MODE_LABELS: Record<ItemInputMode, string> = {
+    items: "Items only (default)",
+    attachment: "Attachment only",
+    either: "Either items or attachment (user chooses)",
+};
+
+const empty: DeptForm = { name: "", description: "", itemInputMode: "items" };
 
 export function DepartmentsManager() {
     const { toast } = useToast();
@@ -129,7 +140,7 @@ export function DepartmentsManager() {
 
     const openEdit = (dept: Department) => {
         setEditTarget(dept);
-        setForm({ name: dept.name, description: dept.description ?? "" });
+        setForm({ name: dept.name, description: dept.description ?? "", itemInputMode: dept.itemInputMode ?? "items" });
         setDialogOpen(true);
     };
 
@@ -220,6 +231,11 @@ export function DepartmentsManager() {
                                         <div className="flex items-center gap-2">
                                             <span className="font-medium">{dept.name}</span>
                                             <Badge variant="secondary" className="text-xs">Active</Badge>
+                                            {dept.itemInputMode && dept.itemInputMode !== "items" && (
+                                                <Badge variant="outline" className="text-xs text-blue-600 border-blue-300">
+                                                    {dept.itemInputMode === "attachment" ? "Attachment only" : "Items or Attachment"}
+                                                </Badge>
+                                            )}
                                         </div>
                                         {dept.description && (
                                             <p className="text-sm text-muted-foreground mt-0.5">{dept.description}</p>
@@ -277,6 +293,23 @@ export function DepartmentsManager() {
                                 value={form.description}
                                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
                             />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-sm font-medium">Gate Pass Input Mode</label>
+                            <p className="text-xs text-muted-foreground">Controls whether users in this department enter item details, upload an attachment, or can choose either.</p>
+                            <Select
+                                value={form.itemInputMode}
+                                onValueChange={v => setForm(f => ({ ...f, itemInputMode: v as ItemInputMode }))}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {(Object.entries(INPUT_MODE_LABELS) as [ItemInputMode, string][]).map(([val, label]) => (
+                                        <SelectItem key={val} value={val}>{label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
 

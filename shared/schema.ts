@@ -1,14 +1,14 @@
-import { mysqlTable, text, int, date, timestamp, boolean, primaryKey, json, varchar } from "drizzle-orm/mysql-core";
+import { mysqlTable, text, mediumtext, int, date, timestamp, boolean, primaryKey, json, varchar } from "drizzle-orm/mysql-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Custom validation regex patterns
-export const PHONE_REGEX = /^03\d{2}-\d{7}$/; // e.g., 0306-2228391
+export const PHONE_REGEX = /^03\d{2}-?\d{7}$/; // e.g., 0306-2228391 or 03062228391
 export const CNIC_REGEX = /^\d{5}-\d{7}-\d{1}$/; // e.g., 42101-9948106-8
 
 // Custom error messages
-export const PHONE_ERROR = "Phone number must be in format: 0306-2228391";
+export const PHONE_ERROR = "Phone number must be in format: 0306-2228391 or 03062228391";
 export const CNIC_ERROR = "CNIC must be in format: 42101-9948106-8";
 
 // Permission types
@@ -44,12 +44,16 @@ export enum ModuleType {
 export const companies = mysqlTable("companies", {
   id: int("id").primaryKey().autoincrement(),
   name: varchar("name", { length: 255 }).notNull().unique(),
+  fullName: varchar("full_name", { length: 255 }),
+  tagline: varchar("tagline", { length: 255 }),
   shortName: varchar("short_name", { length: 50 }),  // e.g., AGP, OBS-PK, OBS-INT
   code: varchar("code", { length: 20 }),              // Phase 7: Company code
-  logo: text("logo"),                                 // Phase 7: Logo URL or base64
+  logo: mediumtext("logo"),                           // Phase 7: Logo URL or base64 (MEDIUMTEXT = 16 MB)
   address: text("address"),
   phone: varchar("phone", { length: 20 }),
   email: varchar("email", { length: 255 }),
+  website: varchar("website", { length: 255 }),
+  footerText: text("footer_text"),
   active: boolean("active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
@@ -88,6 +92,10 @@ export const departments = mysqlTable("departments", {
   code: varchar("code", { length: 30 }),          // short code e.g. ADMIN, BD, CD
   description: varchar("description", { length: 255 }),
   active: boolean("active").default(true).notNull(),
+  // 'items' = always show items table (default)
+  // 'attachment' = always use attachment only
+  // 'either' = user chooses items OR attachment per gate pass
+  itemInputMode: varchar("item_input_mode", { length: 20 }).default("items").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
@@ -126,9 +134,12 @@ export const users = mysqlTable("users", {
   fullName: varchar("full_name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }).notNull().unique(),
   password: varchar("password", { length: 255 }).notNull(),
+  passwordResetToken: varchar("password_reset_token", { length: 255 }),   // Phase 10
+  passwordResetExpiry: timestamp("password_reset_expiry"),                 // Phase 10
   phoneNumber: varchar("phone_number", { length: 20 }),
   department: varchar("department", { length: 100 }).notNull(),
   division: varchar("division", { length: 100 }),          // Phase 7: Division (sub-unit of dept)
+  divisionCategory: varchar("division_category", { length: 100 }), // Division category (e.g. "Div A")
   sapEmployeeCode: varchar("sap_employee_code", { length: 50 }), // Phase 7: SAP employee ID
   roleId: int("role_id").references(() => roles.id),
   companyId: int("company_id").references(() => companies.id, { onDelete: "set null" }), // Multi-company
@@ -163,6 +174,11 @@ export const items = mysqlTable("items", {
   name: varchar("name", { length: 255 }).notNull(),
   sku: varchar("sku", { length: 100 }).notNull(),
   quantity: int("quantity").notNull(),
+  unit: varchar("unit", { length: 50 }),
+  itemType: varchar("item_type", { length: 20 }).default("material"),
+  reason: text("reason"),
+  // Phase 18: Partial return tracking (for returnable gate passes)
+  receivedQuantity: int("received_quantity").default(0),
 });
 
 export const insertItemSchema = createInsertSchema(items).omit({
@@ -188,7 +204,9 @@ export const gatePasses = mysqlTable("gate_passes", {
   driverCnic: varchar("driver_cnic", { length: 20 }).notNull(),
   deliveryVanNumber: varchar("delivery_van_number", { length: 50 }).notNull(),
   department: varchar("department", { length: 100 }).notNull(),
+  reason: text("reason"),                   // Reason for the gate pass (purpose/justification)
   notes: text("notes"), // Additional notes
+  allowTo: varchar("allow_to", { length: 255 }),
   createdBy: varchar("created_by", { length: 255 }).notNull(),
   createdById: int("created_by_id").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -211,20 +229,39 @@ export const gatePasses = mysqlTable("gate_passes", {
   expectedReturnDate: date("expected_return_date"),                                  // Returnable passes only
   actualReturnDate: date("actual_return_date"),                                      // Set when goods are returned
   gateId: int("gate_id"),                                                            // Phase 7: Selected gate (FK in migration 012, not Drizzle)
+  plantId: int("plant_id"),                                                           // Selected plant
+  // Phase 17: Force Close
+  forceClosedBy: int("force_closed_by").references(() => users.id, { onDelete: "set null" }),
+  forceClosedAt: timestamp("force_closed_at"),
+  forceCloseRemarks: text("force_close_remarks"),
+  // Phase 18: SAP Reference Code — generated when gate pass is completed/force-closed
+  sapReferenceCode: varchar("sap_reference_code", { length: 30 }).unique(),
 });
 
 export const insertGatePassSchema = createInsertSchema(gatePasses, {
-  date: z.coerce.date()
+  date: z.coerce.date(),
+  expectedReturnDate: z.coerce.date().optional().nullable(),
+  actualReturnDate: z.coerce.date().optional().nullable(),
 })
   .extend({
+    driverName: z.string().optional().or(z.literal("")),
     driverMobile: z.string()
       .regex(PHONE_REGEX, PHONE_ERROR)
-      .min(12, "Phone number must be 12 characters long")
-      .max(12, "Phone number must be 12 characters long"),
+      .min(11, "Phone number must be 11 or 12 characters long")
+      .max(12, "Phone number must be 11 or 12 characters long")
+      .optional()
+      .or(z.literal("")),
     driverCnic: z.string()
       .regex(CNIC_REGEX, CNIC_ERROR)
       .min(15, "CNIC must be 15 characters long")
-      .max(15, "CNIC must be 15 characters long"),
+      .max(15, "CNIC must be 15 characters long")
+      .optional()
+      .or(z.literal("")),
+    deliveryVanNumber: z.string().optional().or(z.literal("")),
+    allowTo: z.string().optional().or(z.literal("")),
+    // Nullable FK overrides: DB columns are .notNull().default(0) but client may send null
+    driverId: z.number().optional().nullable().transform(v => v ?? 0),
+    customerId: z.number().optional().nullable().transform(v => v ?? 0),
   })
   .omit({
     id: true,
@@ -239,15 +276,16 @@ export const loginSchema = z.object({
   rememberMe: z.boolean().optional(),
 });
 
-// Gate Pass schema with items
+// Gate Pass schema with items (min 0 — attachment-mode departments may submit without items)
 export const gatePassWithItemsSchema = insertGatePassSchema.extend({
-  items: z.array(insertItemSchema).min(1, "At least one item is required"),
+  items: z.array(insertItemSchema),
 });
 
 // Customer model
 export const customers = mysqlTable("customers", {
   id: int("id").primaryKey().autoincrement(),
   companyId: int("company_id").references(() => companies.id, { onDelete: "set null" }), // Multi-company
+  code: varchar("code", { length: 50 }),                // Customer code (e.g. CUST-001)
   name: varchar("name", { length: 255 }).notNull(),
   phone: varchar("phone", { length: 20 }),
   address: text("address"),
@@ -256,16 +294,20 @@ export const customers = mysqlTable("customers", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   // Phase 5: SAP sync tracking
-  sapId: varchar("sap_id", { length: 100 }),         // SAP Business Partner number
+  sapId: varchar("sap_id", { length: 100 }),            // SAP Business Partner number
   syncedFromSap: boolean("synced_from_sap").default(false).notNull(),
+  active: boolean("active").default(true).notNull(),    // Active/Inactive status
 });
 
 export const insertCustomerSchema = createInsertSchema(customers)
   .extend({
     phone: z.string()
       .regex(PHONE_REGEX, PHONE_ERROR)
-      .min(12, "Phone number must be 12 characters long")
-      .max(12, "Phone number must be 12 characters long"),
+      .min(11, "Phone number must be 11 or 12 characters long")
+      .max(12, "Phone number must be 11 or 12 characters long")
+      .optional()
+      .or(z.literal(""))
+      .nullable(),
   })
   .omit({
     id: true,
@@ -277,23 +319,26 @@ export const insertCustomerSchema = createInsertSchema(customers)
 export const drivers = mysqlTable("drivers", {
   id: int("id").primaryKey().autoincrement(),
   companyId: int("company_id").references(() => companies.id, { onDelete: "set null" }), // Multi-company
+  code: varchar("code", { length: 50 }),                 // Driver code (e.g. DRV-001)
   name: varchar("name", { length: 255 }).notNull(),
   mobile: varchar("mobile", { length: 20 }).notNull(),
   cnic: varchar("cnic", { length: 20 }).notNull().unique(),
   vehicleNumber: varchar("vehicle_number", { length: 50 }),
+  email: varchar("email", { length: 255 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   // Phase 5: SAP sync tracking
-  sapId: varchar("sap_id", { length: 100 }),         // SAP vendor/driver ID
+  sapId: varchar("sap_id", { length: 100 }),             // SAP vendor/driver ID
   syncedFromSap: boolean("synced_from_sap").default(false).notNull(),
+  active: boolean("active").default(true).notNull(),     // Active/Inactive status
 });
 
 export const insertDriverSchema = createInsertSchema(drivers)
   .extend({
     mobile: z.string()
       .regex(PHONE_REGEX, PHONE_ERROR)
-      .min(12, "Phone number must be 12 characters long")
-      .max(12, "Phone number must be 12 characters long"),
+      .min(11, "Phone number must be 11 or 12 characters long")
+      .max(12, "Phone number must be 11 or 12 characters long"),
     cnic: z.string()
       .regex(CNIC_REGEX, CNIC_ERROR)
       .min(15, "CNIC must be 15 characters long")
@@ -404,7 +449,7 @@ export const documents = mysqlTable("documents", {
   fileName: varchar("file_name", { length: 255 }).notNull(),
   fileType: varchar("file_type", { length: 100 }).notNull(), // MIME type
   fileSize: int("file_size").notNull(), // Size in bytes
-  fileData: text("file_data").notNull(), // Base64 encoded file data
+  fileData: mediumtext("file_data").notNull(), // Base64 encoded file data (MEDIUMTEXT = 16 MB)
   entityType: varchar("entity_type", { length: 100 }).notNull(), // Type of entity this document is attached to (gatePass, customer, etc.)
   entityId: int("entity_id").notNull(), // ID of the related entity
   description: text("description"),
@@ -413,7 +458,11 @@ export const documents = mysqlTable("documents", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const insertDocumentSchema = createInsertSchema(documents).omit({
+export const insertDocumentSchema = createInsertSchema(documents, {
+  // Override fileData: drizzle-zod maps MEDIUMTEXT → z.string().max(16MB) which is fine,
+  // but we explicitly set z.string() to avoid any generated limit surprises.
+  fileData: z.string().min(1),
+}).omit({
   id: true,
   createdAt: true,
 });
@@ -526,3 +575,45 @@ export const itemMaster = mysqlTable("item_master", {
 export const insertItemMasterSchema = createInsertSchema(itemMaster).omit({ id: true, createdAt: true, updatedAt: true });
 export type ItemMaster = typeof itemMaster.$inferSelect;
 export type InsertItemMaster = z.infer<typeof insertItemMasterSchema>;
+
+// ================================================================
+// User Assignment Junction Tables (multi-company / plant / gate)
+// ================================================================
+
+export const userCompanies = mysqlTable("user_companies", {
+  userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  companyId: int("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+});
+
+export const userPlants = mysqlTable("user_plants", {
+  userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  plantId: int("plant_id").notNull().references(() => plants.id, { onDelete: "cascade" }),
+});
+
+export const userGates = mysqlTable("user_gates", {
+  userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  gateId: int("gate_id").notNull().references(() => gates.id, { onDelete: "cascade" }),
+});
+
+// ================================================================
+// Report Templates — persisted Custom Report Builder configs
+// ================================================================
+
+export const reportTemplates = mysqlTable("report_templates", {
+  id: int("id").primaryKey().autoincrement(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  config: json("config").notNull(),          // stores full form values (filters, columns, groupBy, sortBy, sortOrder)
+  userId: int("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  companyId: int("company_id").references(() => companies.id, { onDelete: "cascade" }),
+  isShared: boolean("is_shared").default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+export const insertReportTemplateSchema = createInsertSchema(reportTemplates).omit({
+  id: true, createdAt: true, updatedAt: true,
+});
+
+export type ReportTemplate = typeof reportTemplates.$inferSelect;
+export type InsertReportTemplate = z.infer<typeof insertReportTemplateSchema>;

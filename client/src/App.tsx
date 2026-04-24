@@ -21,6 +21,7 @@ import PublicVerifyGatePass from "@/pages/PublicVerifyGatePass";
 import CompanySettings from "@/pages/CompanySettings";
 import NotificationSettings from "@/pages/NotificationSettings";
 import Customers from "@/pages/Customers";
+import Vendors from "@/pages/Vendors";
 import Drivers from "@/pages/Drivers";
 import ActivityLogs from "@/pages/ActivityLogs";
 import Documents from "@/pages/Documents";
@@ -164,9 +165,15 @@ function Router() {
         />
       </Route>
       <Route path="/customers">
-        <ProtectedRoute 
-          component={Customers} 
-          requiredPermission={{ module: "customer", action: "read" }} 
+        <ProtectedRoute
+          component={Customers}
+          requiredPermission={{ module: "customer", action: "read" }}
+        />
+      </Route>
+      <Route path="/vendors">
+        <ProtectedRoute
+          component={Vendors}
+          requiredPermission={{ module: "vendor", action: "read" }}
         />
       </Route>
       <Route path="/drivers">

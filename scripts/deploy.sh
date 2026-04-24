@@ -128,7 +128,7 @@ ADMIN_PASSWORD="admin123"  # Change this to a secure password
 sudo -u postgres psql gatepass_db << EOF
 INSERT INTO users (email, password, full_name, department, role_id, active)
 VALUES (
-    'admin@parazelsus.pk',
+    'admin@agp.com.pk',
     '$ADMIN_PASSWORD',
     'Admin User',
     'Administration',

@@ -7,7 +7,7 @@ const createAdmin = async () => {
   const hash = await bcrypt.hash(password, 10);
   
   await db.insert(users).values({
-    email: 'admin@parazelsus.pk',
+    email: 'admin@agp.com.pk',
     password: hash,
     fullName: 'Admin User',
     department: 'IT',

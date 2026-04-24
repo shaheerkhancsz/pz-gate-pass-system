@@ -43,13 +43,31 @@ export function AnalyticsVisualization() {
     setDateRange(prev => ({ ...prev, [field]: value }));
   };
 
+  const STATUS_LABELS: Record<string, string> = {
+    pending: "Pending",
+    hod_approved: "HOD Approved",
+    security_allowed: "Security Allowed",
+    completed: "Completed",
+    rejected: "Rejected",
+    sent_back: "Sent Back",
+  };
+
   // Prepare data for the selected visualization
   const getChartData = () => {
     if (!statistics) return [];
 
     switch(dataType) {
       case 'status':
-        return statistics.statusDistribution;
+        // Map raw status keys to friendly labels for display
+        return statistics.statusDistribution.map((item) => ({
+          ...item,
+          status: STATUS_LABELS[item.status] || item.status,
+        }));
+      case 'type':
+        return (statistics as any).typeDistribution?.map((item: any) => ({
+          ...item,
+          type: item.type ? item.type.charAt(0).toUpperCase() + item.type.slice(1) : "Unknown",
+        })) ?? [];
       case 'department':
         return statistics.departmentDistribution;
       case 'monthly':
@@ -65,6 +83,7 @@ export function AnalyticsVisualization() {
   const getXAxisLabel = () => {
     switch(dataType) {
       case 'status': return 'Status';
+      case 'type': return 'Type';
       case 'department': return 'Department';
       case 'monthly': return 'Month';
       case 'daily': return 'Date';
@@ -73,23 +92,13 @@ export function AnalyticsVisualization() {
   };
 
   // Get appropriate data key for the selected data type
-  const getDataKey = () => {
-    switch(dataType) {
-      case 'status': 
-      case 'department': 
-        return 'count';
-      case 'monthly':
-      case 'daily':
-        return 'count';
-      default: 
-        return 'count';
-    }
-  };
+  const getDataKey = () => 'count';
 
   // Get appropriate name key for the selected data type
   const getNameKey = () => {
     switch(dataType) {
       case 'status': return 'status';
+      case 'type': return 'type';
       case 'department': return 'department';
       case 'monthly': return 'month';
       case 'daily': return 'date';
@@ -99,14 +108,14 @@ export function AnalyticsVisualization() {
 
   // Format the chart title based on current selection
   const getChartTitle = () => {
-    const typeText = {
+    const typeText: Record<string, string> = {
       'status': 'Status Distribution',
+      'type': 'Type Distribution',
       'department': 'Department Distribution',
       'monthly': 'Monthly Trend',
-      'daily': 'Daily Distribution'
-    }[dataType];
-    
-    return `Gate Pass ${typeText}`;
+      'daily': 'Daily Distribution',
+    };
+    return `Gate Pass ${typeText[dataType] || dataType}`;
   };
 
   // Export chart as PDF
@@ -260,34 +269,49 @@ export function AnalyticsVisualization() {
   // Render summary statistics in cards
   const renderSummary = () => {
     if (!statistics) return null;
-    
+    const stats = statistics as any;
+
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4 mb-6">
         <Card>
           <CardContent className="p-4">
-            <div className="text-sm text-neutral-gray mb-1">Total Gate Passes</div>
+            <div className="text-xs text-neutral-gray mb-1">Total</div>
             <div className="text-2xl font-semibold">{statistics.totalPasses}</div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
-            <div className="text-sm text-neutral-gray mb-1">Monthly Gate Passes</div>
+            <div className="text-xs text-neutral-gray mb-1">This Month</div>
             <div className="text-2xl font-semibold">{statistics.monthlyPasses}</div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="p-4">
-            <div className="text-sm text-neutral-gray mb-1">Weekly Gate Passes</div>
+            <div className="text-xs text-neutral-gray mb-1">This Week</div>
             <div className="text-2xl font-semibold">{statistics.weeklyPasses}</div>
           </CardContent>
         </Card>
-        
-        <Card>
+
+        <Card className="border-l-4 border-l-yellow-400">
           <CardContent className="p-4">
-            <div className="text-sm text-neutral-gray mb-1">Pending Approvals</div>
-            <div className="text-2xl font-semibold">{statistics.pendingApprovals}</div>
+            <div className="text-xs text-neutral-gray mb-1">Awaiting HOD</div>
+            <div className="text-2xl font-semibold text-yellow-600">{stats.pendingHOD ?? statistics.pendingApprovals}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-blue-400">
+          <CardContent className="p-4">
+            <div className="text-xs text-neutral-gray mb-1">Awaiting Security</div>
+            <div className="text-2xl font-semibold text-blue-600">{stats.pendingSecurity ?? 0}</div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-orange-400">
+          <CardContent className="p-4">
+            <div className="text-xs text-neutral-gray mb-1">Sent Back</div>
+            <div className="text-2xl font-semibold text-orange-600">{stats.sentBack ?? 0}</div>
           </CardContent>
         </Card>
       </div>
@@ -340,6 +364,7 @@ export function AnalyticsVisualization() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="status">Status Distribution</SelectItem>
+                <SelectItem value="type">Type Distribution</SelectItem>
                 <SelectItem value="department">Department Distribution</SelectItem>
                 <SelectItem value="monthly">Monthly Trend</SelectItem>
                 <SelectItem value="daily">Daily Distribution</SelectItem>

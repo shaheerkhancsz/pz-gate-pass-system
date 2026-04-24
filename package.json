@@ -9,7 +9,10 @@
     "start": "node dist/server/index.js",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "deploy": "chmod +x scripts/deploy.sh && ./scripts/deploy.sh"
+    "deploy": "chmod +x scripts/deploy.sh && ./scripts/deploy.sh",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -92,6 +95,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@replit/vite-plugin-cartographer": "^0.0.11",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@tailwindcss/typography": "^0.5.15",

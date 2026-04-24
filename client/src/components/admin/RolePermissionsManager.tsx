@@ -1,47 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { queryClient, apiRequest } from '@/lib/queryClient';
-import { 
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from "@/components/ui/table";
-import { 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ShieldCheck, Pencil, Trash2, Plus, AlertTriangle } from 'lucide-react';
 
-// Interfaces for roles and permissions
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface Role {
   id: number;
   name: string;
@@ -55,431 +42,437 @@ interface Permission {
   action: string;
 }
 
-// Types for module actions
-interface ModuleActions {
-  [key: string]: string[] | {
-    [key: string]: string;
-  };
-}
+// ─── Module / Action definitions ──────────────────────────────────────────────
+// Each module lists ONLY the actions that are meaningful for it.
 
-// Module types for permissions
-const moduleTypes = [
-  'gatePass',
-  'customer',
-  'driver',
-  'user',
-  'report',
-  'activityLog',
-  'document',
-  'qrScanner',
-  'notification',
-  'companySettings'
+const MODULES: { key: string; label: string; actions: { key: string; label: string }[] }[] = [
+  {
+    key: "gatePass",
+    label: "Gate Pass",
+    actions: [
+      { key: "create",  label: "Create"              },
+      { key: "read",    label: "View"                },
+      { key: "update",  label: "Edit"                },
+      { key: "delete",  label: "Delete"              },
+      { key: "approve", label: "Approve (HOD)"       },
+      { key: "verify",  label: "Verify (Security)"   },
+      { key: "manage",  label: "Force Close / Admin" },
+      { key: "print",   label: "Print"               },
+    ],
+  },
+  {
+    key: "customer",
+    label: "Customer",
+    actions: [
+      { key: "create", label: "Create" },
+      { key: "read",   label: "View"   },
+      { key: "update", label: "Edit"   },
+      { key: "delete", label: "Delete" },
+    ],
+  },
+  {
+    key: "driver",
+    label: "Driver",
+    actions: [
+      { key: "create", label: "Create" },
+      { key: "read",   label: "View"   },
+      { key: "update", label: "Edit"   },
+      { key: "delete", label: "Delete" },
+    ],
+  },
+  {
+    key: "vendor",
+    label: "Vendor",
+    actions: [
+      { key: "create", label: "Create" },
+      { key: "read",   label: "View"   },
+      { key: "update", label: "Edit"   },
+      { key: "delete", label: "Delete" },
+    ],
+  },
+  {
+    key: "document",
+    label: "Document",
+    actions: [
+      { key: "create", label: "Upload" },
+      { key: "read",   label: "View"   },
+      { key: "update", label: "Edit"   },
+      { key: "delete", label: "Delete" },
+    ],
+  },
+  {
+    key: "report",
+    label: "Reports",
+    actions: [
+      { key: "read",            label: "View All Reports"   },
+      { key: "export",          label: "Export"             },
+      { key: "standard",        label: "Gate Pass Summary"  },
+      { key: "custom",          label: "Custom Reports"     },
+      { key: "analytics",       label: "Analytics"          },
+      { key: "pending",         label: "Pending Approvals"  },
+      { key: "returnables",     label: "Returnable Tracker" },
+      { key: "gate-traffic",    label: "Gate/Plant Traffic" },
+      { key: "company-summary", label: "Company Summary"    },
+      { key: "dept-summary",    label: "Dept. Summary"      },
+      { key: "user-activity",   label: "User Activity"      },
+      { key: "vendor-customer", label: "Vendor/Customer"    },
+      { key: "item-movement",   label: "Item Movement"      },
+      { key: "documents",       label: "Documents"          },
+      { key: "driver-activity", label: "Driver Activity"    },
+    ],
+  },
+  {
+    key: "user",
+    label: "User Management",
+    actions: [
+      { key: "create", label: "Create" },
+      { key: "read",   label: "View"   },
+      { key: "update", label: "Edit"   },
+      { key: "delete", label: "Delete" },
+    ],
+  },
+  {
+    key: "activityLog",
+    label: "Activity Log",
+    actions: [
+      { key: "read", label: "View" },
+    ],
+  },
+  {
+    key: "qrScanner",
+    label: "QR Scanner",
+    actions: [
+      { key: "read", label: "Access" },
+    ],
+  },
+  {
+    key: "notification",
+    label: "Notifications",
+    actions: [
+      { key: "read",   label: "View"   },
+      { key: "manage", label: "Manage" },
+    ],
+  },
+  {
+    key: "companySettings",
+    label: "Company Settings",
+    actions: [
+      { key: "read",   label: "View" },
+      { key: "update", label: "Edit" },
+    ],
+  },
+  {
+    key: "dashboard",
+    label: "Dashboard",
+    actions: [
+      { key: "read", label: "Access" },
+    ],
+  },
 ];
 
-// Base permission actions (CRUD)
-const baseActions = ['create', 'read', 'update', 'delete'];
+// ─── Form schema ──────────────────────────────────────────────────────────────
 
-// Special actions for specific modules
-const moduleSpecificActions: ModuleActions = {
-  gatePass: {
-    create: 'Create new gate passes',
-    read: 'View gate passes',
-    update: 'Edit existing gate passes',
-    delete: 'Delete gate passes',
-    approve: 'Approve gate passes (Manager level)',
-    verify: 'Security verification at checkpoint'
-  },
-  customer: baseActions,
-  driver: baseActions,
-  user: baseActions,
-  report: ['read', 'export'],
-  activityLog: ['read'],
-  document: {
-    create: 'Upload new documents',
-    read: 'View documents',
-    update: 'Edit document details',
-    delete: 'Delete documents'
-  },
-  qrScanner: ['read', 'scan'],
-  notification: ['read', 'manage'],
-  companySettings: ['read', 'update']
-};
-
-// Get actions for a specific module
-const getActionsForModule = (module: string): string[] => {
-  const actions = moduleSpecificActions[module];
-  if (typeof actions === 'object' && !Array.isArray(actions)) {
-    return [...baseActions, ...Object.keys(actions).filter(key => !baseActions.includes(key))];
-  }
-  return actions || baseActions;
-};
-
-// Get description for special actions
-const getActionDescription = (module: string, action: string): string | undefined => {
-  const actions = moduleSpecificActions[module];
-  if (typeof actions === 'object' && !Array.isArray(actions)) {
-    return actions[action];
-  }
-  return undefined;
-};
-
-// Form schema for adding/editing a role
 const roleFormSchema = z.object({
-  name: z.string().min(2, "Name must be at least 2 characters"),
+  name:        z.string().min(2, "Name must be at least 2 characters"),
   description: z.string().min(5, "Description must be at least 5 characters"),
 });
+type RoleFormValues = z.infer<typeof roleFormSchema>;
 
-// Role Manager Component
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export function RolePermissionsManager() {
   const { toast } = useToast();
-  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+
+  const [editRole,   setEditRole]   = useState<Role | null>(null);
+  const [deleteRole, setDeleteRole] = useState<Role | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+
   const [permissionsByRole, setPermissionsByRole] = useState<Record<number, Permission[]>>({});
 
-  // Form for creating/editing roles
-  const form = useForm<z.infer<typeof roleFormSchema>>({
+  // Separate form instances for create vs edit
+  const createForm = useForm<RoleFormValues>({
     resolver: zodResolver(roleFormSchema),
-    defaultValues: {
-      name: "",
-      description: "",
-    },
+    defaultValues: { name: "", description: "" },
+  });
+  const editForm = useForm<RoleFormValues>({
+    resolver: zodResolver(roleFormSchema),
+    defaultValues: { name: "", description: "" },
   });
 
-  // Fetch all roles
-  const { data: roles = [], isLoading: rolesLoading } = useQuery({ 
+  // ── Queries ────────────────────────────────────────────────────────────────
+
+  const { data: roles = [], isLoading } = useQuery<Role[]>({
     queryKey: ['/api/roles'],
-    queryFn: async () => {
-      const res = await apiRequest('GET', '/api/roles');
-      return res.json();
-    }
+    queryFn: () => apiRequest('GET', '/api/roles').then(r => r.json()),
   });
 
-  // Fetch all permissions
-  const { data: allPermissions = [] } = useQuery({ 
+  const { data: allPermissions = [] } = useQuery<Permission[]>({
     queryKey: ['/api/permissions'],
-    queryFn: async () => {
-      const res = await apiRequest('GET', '/api/permissions');
-      return res.json();
-    }
+    queryFn: () => apiRequest('GET', '/api/permissions').then(r => r.json()),
   });
 
-  // Mutation for creating a new role
+  useEffect(() => {
+    const map: Record<number, Permission[]> = {};
+    allPermissions.forEach(p => {
+      if (!map[p.roleId]) map[p.roleId] = [];
+      map[p.roleId].push(p);
+    });
+    setPermissionsByRole(map);
+  }, [allPermissions]);
+
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
   const createRoleMutation = useMutation({
-    mutationFn: (newRole: z.infer<typeof roleFormSchema>) => {
-      return apiRequest('POST', '/api/roles', newRole);
-    },
+    mutationFn: (data: RoleFormValues) => apiRequest('POST', '/api/roles', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/roles'] });
-      setIsCreateDialogOpen(false);
-      form.reset();
-      toast({
-        title: "Role created",
-        description: "The role has been created successfully",
-      });
+      setCreateOpen(false);
+      createForm.reset();
+      toast({ title: "Role created", description: "New role has been created successfully." });
     },
-    onError: (error) => {
-      toast({
-        title: "Failed to create role",
-        description: error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-    }
+    onError: (e: Error) => toast({ title: "Failed to create role", description: e.message, variant: "destructive" }),
   });
 
-  // Mutation for updating a role
   const updateRoleMutation = useMutation({
-    mutationFn: (data: { id: number, role: z.infer<typeof roleFormSchema> }) => {
-      return apiRequest('PATCH', `/api/roles/${data.id}`, data.role);
-    },
+    mutationFn: (data: { id: number; values: RoleFormValues }) =>
+      apiRequest('PATCH', `/api/roles/${data.id}`, data.values),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/roles'] });
-      setIsEditDialogOpen(false);
-      form.reset();
-      toast({
-        title: "Role updated",
-        description: "The role has been updated successfully",
-      });
+      setEditRole(null);
+      toast({ title: "Role updated", description: "Role details have been saved." });
     },
-    onError: (error) => {
-      toast({
-        title: "Failed to update role",
-        description: error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-    }
+    onError: (e: Error) => toast({ title: "Failed to update role", description: e.message, variant: "destructive" }),
   });
 
-  // Mutation for adding/removing permissions
-  const updatePermissionMutation = useMutation({
-    mutationFn: (data: { roleId: number, module: string, action: string, grant: boolean }) => {
+  const deleteRoleMutation = useMutation({
+    mutationFn: (id: number) => apiRequest('DELETE', `/api/roles/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/roles'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/permissions'] });
+      setDeleteRole(null);
+      toast({ title: "Role deleted", description: "The role has been removed." });
+    },
+    onError: (e: Error) => toast({ title: "Failed to delete role", description: e.message, variant: "destructive" }),
+  });
+
+  const permissionMutation = useMutation({
+    mutationFn: (data: { roleId: number; module: string; action: string; grant: boolean }) => {
       if (data.grant) {
         return apiRequest('POST', '/api/permissions', {
           roleId: data.roleId,
           module: data.module,
-          action: data.action
+          action: data.action,
         });
-      } else {
-        // Find the permission ID to delete
-        const permissionToDelete = permissionsByRole[data.roleId]?.find(
-          p => p.module === data.module && p.action === data.action
-        );
-        if (!permissionToDelete) {
-          throw new Error("Permission not found");
-        }
-        return apiRequest('DELETE', `/api/permissions/${permissionToDelete.id}`);
       }
+      const existing = permissionsByRole[data.roleId]?.find(
+        p => p.module === data.module && p.action === data.action
+      );
+      if (!existing) throw new Error("Permission record not found");
+      return apiRequest('DELETE', `/api/permissions/${existing.id}`);
     },
-    onSuccess: (_, variables) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/permissions'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/roles', variables.roleId, 'permissions'] });
-      toast({
-        title: "Permissions updated",
-        description: "The permissions have been updated successfully",
-      });
     },
-    onError: (error) => {
-      toast({
-        title: "Failed to update permissions",
-        description: error instanceof Error ? error.message : "An error occurred",
-        variant: "destructive",
-      });
-    }
+    onError: (e: Error) => toast({ title: "Failed to update permission", description: e.message, variant: "destructive" }),
   });
 
-  // Effect to organize permissions by role ID
-  useEffect(() => {
-    const permsByRole: Record<number, Permission[]> = {};
-    allPermissions.forEach((perm: Permission) => {
-      if (!permsByRole[perm.roleId]) {
-        permsByRole[perm.roleId] = [];
-      }
-      permsByRole[perm.roleId].push(perm);
-    });
-    setPermissionsByRole(permsByRole);
-  }, [allPermissions]);
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
-  // Helper to check if a role has a specific permission
-  const hasPermission = (roleId: number, module: string, action: string) => {
-    return permissionsByRole[roleId]?.some(
-      p => p.module === module && p.action === action
-    ) || false;
+  const hasPerm = (roleId: number, module: string, action: string) =>
+    permissionsByRole[roleId]?.some(p => p.module === module && p.action === action) ?? false;
+
+  const isAdminRole = (role: Role) => role.id === 1 || role.name.toLowerCase() === 'admin';
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const openEdit = (role: Role) => {
+    setEditRole(role);
+    editForm.reset({ name: role.name, description: role.description });
   };
 
-  // Handle permission checkbox toggle
-  const handlePermissionToggle = (roleId: number, module: string, action: string, currentValue: boolean) => {
-    updatePermissionMutation.mutate({
-      roleId,
-      module,
-      action,
-      grant: !currentValue
-    });
-  };
+  // ── Render ─────────────────────────────────────────────────────────────────
 
-  // Handle edit role button click
-  const handleEditRole = (role: Role) => {
-    setSelectedRole(role);
-    form.reset({
-      name: role.name,
-      description: role.description,
-    });
-    setIsEditDialogOpen(true);
-  };
-
-  // Handle form submission for edit
-  const onSubmitEdit = (data: z.infer<typeof roleFormSchema>) => {
-    if (!selectedRole) return;
-    updateRoleMutation.mutate({ id: selectedRole.id, role: data });
-  };
-
-  // Handle form submission for create
-  const onSubmitCreate = (data: z.infer<typeof roleFormSchema>) => {
-    createRoleMutation.mutate(data);
-  };
-
-  if (rolesLoading) {
+  if (isLoading) {
     return (
-      <div className="flex justify-center p-8">
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
+      <div className="flex justify-center p-12">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center mb-8">
+
+      {/* Header */}
+      <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-semibold">Role & Permission Management</h2>
-          <p className="text-muted-foreground mt-1">Manage user roles and their permissions</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            Define what each role can do across all modules.
+          </p>
         </div>
-        <Button
-          onClick={() => {
-            form.reset({ name: "", description: "" });
-            setIsCreateDialogOpen(true);
-          }}
-          className="bg-primary text-white hover:bg-primary/90"
-        >
-          Add New Role
+        <Button onClick={() => { createForm.reset(); setCreateOpen(true); }}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Role
         </Button>
       </div>
 
-      <div className="grid gap-6">
-        {roles.map((role: Role) => (
-          <div key={role.id} className="border rounded-lg shadow-sm bg-card">
-            <div className="p-6 flex justify-between items-start border-b">
-              <div>
-                <h3 className="text-lg font-semibold">{role.name}</h3>
-                <p className="text-sm text-muted-foreground mt-1">{role.description}</p>
+      {/* Role cards */}
+      {roles.map((role: Role) => {
+        const locked = isAdminRole(role);
+        const rolePerms = permissionsByRole[role.id] ?? [];
+        const permCount = rolePerms.length;
+
+        return (
+          <div key={role.id} className="border rounded-xl shadow-sm bg-white overflow-hidden">
+
+            {/* Card header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
+              <div className="flex items-center gap-3">
+                <ShieldCheck className={`h-5 w-5 ${locked ? "text-amber-500" : "text-primary"}`} />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-900">{role.name}</h3>
+                    {locked && (
+                      <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-700 border-amber-200">
+                        System Role
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="text-xs text-gray-500">
+                      {permCount} permission{permCount !== 1 ? "s" : ""}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{role.description}</p>
+                </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleEditRole(role)}
-                className="ml-4"
-              >
-                Edit Role
-              </Button>
+              {!locked && (
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => openEdit(role)}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-red-300 text-red-600 hover:bg-red-50"
+                    onClick={() => setDeleteRole(role)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              )}
             </div>
-            
-            <div className="p-6">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="w-[200px] font-semibold">Module</TableHead>
-                      {baseActions.map(action => (
-                        <TableHead key={action} className="text-center font-semibold">
-                          {action.charAt(0).toUpperCase() + action.slice(1)}
-                        </TableHead>
-                      ))}
-                      <TableHead className="text-center font-semibold">Special Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {moduleTypes.map(module => (
-                      <TableRow key={module} className="hover:bg-muted/50">
-                        <TableCell className="font-medium">
-                          {formatModuleName(module)}
-                        </TableCell>
-                        {baseActions.map(action => (
-                          <TableCell key={action} className="text-center">
+
+            {/* Permission grid */}
+            <div className="divide-y">
+              {MODULES.map(mod => {
+                const allGranted = mod.actions.every(a => hasPerm(role.id, mod.key, a.key));
+                return (
+                  <div key={mod.key} className="flex flex-col sm:flex-row sm:items-start px-3 sm:px-6 py-3 hover:bg-gray-50/50 gap-2 sm:gap-0">
+                    {/* Module name + select-all */}
+                    <div className="sm:w-44 sm:shrink-0 pt-0.5">
+                      <div className="flex items-center gap-2">
+                        {!locked && (
+                          <Checkbox
+                            checked={allGranted}
+                            title="Toggle all"
+                            onCheckedChange={(checked) => {
+                              mod.actions.forEach(a => {
+                                const current = hasPerm(role.id, mod.key, a.key);
+                                if (!!checked !== current) {
+                                  permissionMutation.mutate({
+                                    roleId: role.id,
+                                    module: mod.key,
+                                    action: a.key,
+                                    grant: !!checked,
+                                  });
+                                }
+                              });
+                            }}
+                            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                          />
+                        )}
+                        <span className="text-sm font-medium text-gray-700">{mod.label}</span>
+                      </div>
+                    </div>
+
+                    {/* Action checkboxes */}
+                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                      {mod.actions.map(action => {
+                        const granted = hasPerm(role.id, mod.key, action.key);
+                        return (
+                          <label
+                            key={action.key}
+                            className={`flex items-center gap-1.5 text-sm cursor-pointer select-none ${
+                              locked ? "opacity-60 cursor-not-allowed" : ""
+                            }`}
+                          >
                             <Checkbox
-                              checked={hasPermission(role.id, module, action)}
-                              disabled={role.name === 'Admin'}
-                              onCheckedChange={() => 
-                                handlePermissionToggle(
-                                  role.id, 
-                                  module, 
-                                  action,
-                                  hasPermission(role.id, module, action)
-                                )
+                              checked={locked ? true : granted}
+                              disabled={locked || permissionMutation.isPending}
+                              onCheckedChange={() =>
+                                permissionMutation.mutate({
+                                  roleId: role.id,
+                                  module: mod.key,
+                                  action: action.key,
+                                  grant: !granted,
+                                })
                               }
                               className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                             />
-                          </TableCell>
-                        ))}
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            {getActionsForModule(module)
-                              .filter(action => !baseActions.includes(action))
-                              .map(action => (
-                                <div key={action} className="flex flex-col items-center group relative">
-                                  <Checkbox
-                                    checked={hasPermission(role.id, module, action)}
-                                    disabled={role.name === 'Admin'}
-                                    onCheckedChange={() => 
-                                      handlePermissionToggle(
-                                        role.id, 
-                                        module, 
-                                        action,
-                                        hasPermission(role.id, module, action)
-                                      )
-                                    }
-                                    className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                                  />
-                                  <span className="text-xs text-muted-foreground mt-1">
-                                    {action.charAt(0).toUpperCase() + action.slice(1)}
-                                  </span>
-                                  {getActionDescription(module, action) && (
-                                    <div className="absolute bottom-full mb-2 hidden group-hover:block bg-popover text-popover-foreground text-xs p-2 rounded shadow-lg whitespace-nowrap">
-                                      {getActionDescription(module, action)}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                            <span className={granted && !locked ? "text-gray-800" : "text-gray-500"}>
+                              {action.label}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
 
-      {/* Edit Role Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+      {/* ── Create Role Dialog ────────────────────────────────────────────── */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Edit Role</DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              Update the role details below. Click save when you're done.
+            <DialogTitle>Create New Role</DialogTitle>
+            <DialogDescription>
+              Add a name and description. You can assign permissions immediately after creation.
             </DialogDescription>
           </DialogHeader>
-          
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmitEdit)} className="space-y-6">
+          <Form {...createForm}>
+            <form onSubmit={createForm.handleSubmit(d => createRoleMutation.mutate(d))} className="space-y-4">
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="font-medium">Role Name</FormLabel>
-                    <FormControl>
-                      <Input {...field} className="h-9" />
-                    </FormControl>
+                    <FormLabel>Role Name</FormLabel>
+                    <FormControl><Input placeholder="e.g. HOD Manager" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
               <FormField
-                control={form.control}
+                control={createForm.control}
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="font-medium">Description</FormLabel>
-                    <FormControl>
-                      <Input {...field} className="h-9" />
-                    </FormControl>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl><Input placeholder="e.g. Head of Department, can approve gate passes" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
-              <DialogFooter className="gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsEditDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  type="submit" 
-                  disabled={updateRoleMutation.isPending}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {updateRoleMutation.isPending ? (
-                    <>
-                      <span className="mr-2">Saving</span>
-                      <span className="animate-spin">⏳</span>
-                    </>
-                  ) : (
-                    "Save Changes"
-                  )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                <Button type="submit" disabled={createRoleMutation.isPending}>
+                  {createRoleMutation.isPending ? "Creating..." : "Create Role"}
                 </Button>
               </DialogFooter>
             </form>
@@ -487,84 +480,79 @@ export function RolePermissionsManager() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Role Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+      {/* ── Edit Role Dialog ──────────────────────────────────────────────── */}
+      <Dialog open={!!editRole} onOpenChange={open => !open && setEditRole(null)}>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">Create New Role</DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              Add details for the new role. You can assign permissions after creation.
-            </DialogDescription>
+            <DialogTitle>Edit Role</DialogTitle>
+            <DialogDescription>Update the role name or description.</DialogDescription>
           </DialogHeader>
-          
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmitCreate)} className="space-y-6">
+          <Form {...editForm}>
+            <form
+              onSubmit={editForm.handleSubmit(d =>
+                editRole && updateRoleMutation.mutate({ id: editRole.id, values: d })
+              )}
+              className="space-y-4"
+            >
               <FormField
-                control={form.control}
+                control={editForm.control}
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="font-medium">Role Name</FormLabel>
-                    <FormControl>
-                      <Input {...field} className="h-9" />
-                    </FormControl>
+                    <FormLabel>Role Name</FormLabel>
+                    <FormControl><Input {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
               <FormField
-                control={form.control}
+                control={editForm.control}
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="font-medium">Description</FormLabel>
-                    <FormControl>
-                      <Input {...field} className="h-9" />
-                    </FormControl>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl><Input {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
-              <DialogFooter className="gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsCreateDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  type="submit" 
-                  disabled={createRoleMutation.isPending}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {createRoleMutation.isPending ? (
-                    <>
-                      <span className="mr-2">Creating</span>
-                      <span className="animate-spin">⏳</span>
-                    </>
-                  ) : (
-                    "Create Role"
-                  )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setEditRole(null)}>Cancel</Button>
+                <Button type="submit" disabled={updateRoleMutation.isPending}>
+                  {updateRoleMutation.isPending ? "Saving..." : "Save Changes"}
                 </Button>
               </DialogFooter>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
+
+      {/* ── Delete Confirm Dialog ─────────────────────────────────────────── */}
+      <Dialog open={!!deleteRole} onOpenChange={open => !open && setDeleteRole(null)}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-700">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Role
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the <strong>{deleteRole?.name}</strong> role?
+              All users assigned to this role will lose their permissions. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteRole(null)}>Cancel</Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={deleteRoleMutation.isPending}
+              onClick={() => deleteRole && deleteRoleMutation.mutate(deleteRole.id)}
+            >
+              {deleteRoleMutation.isPending ? "Deleting..." : "Delete Role"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
-}
-
-function formatModuleName(module: string): string {
-  switch (module) {
-    case 'gatePass':
-      return 'Gate Pass';
-    case 'activityLog':
-      return 'Activity Log';
-    default:
-      return module.charAt(0).toUpperCase() + module.slice(1);
-  }
 }

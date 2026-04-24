@@ -3,6 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useLocation, useParams } from "wouter";
+import { companyName } from "@/config/company";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
@@ -51,8 +52,7 @@ export default function ResetPassword() {
     try {
       setIsLoading(true);
       // Send password reset request to the server
-      await apiRequest("POST", "/api/auth/reset-password", {
-        token,
+      await apiRequest("POST", `/api/auth/reset-password/${token}`, {
         password: data.password,
       });
       
@@ -79,7 +79,7 @@ export default function ResetPassword() {
     <div className="fixed inset-0 bg-white z-50 flex items-center justify-center">
       <div className="max-w-md w-full px-6">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-primary">Parazelsus Pakistan</h1>
+          <h1 className="text-2xl font-bold text-primary">{companyName}</h1>
           <p className="text-neutral-gray mt-2">Gate Pass Management System</p>
         </div>
         
@@ -193,8 +193,8 @@ export default function ResetPassword() {
         <div className="text-center mt-6 text-sm text-neutral-gray">
           <p>
             Having trouble? Contact IT Support at{" "}
-            <a href="mailto:it.support@parazelsus.pk" className="text-primary">
-              it.support@parazelsus.pk
+            <a href="mailto:it.support@agp.com.pk" className="text-primary">
+              it.support@agp.com.pk
             </a>
           </p>
         </div>

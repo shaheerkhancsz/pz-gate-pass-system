@@ -6,6 +6,8 @@ import { Switch } from "@/components/ui/switch";
 import { User, InsertUser, roles } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { UserAssignments } from "./UserAssignments";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -36,12 +38,12 @@ import { useDepartments } from "@/hooks/use-departments";
 // Edit user form schema
 const userFormSchema = z.object({
   fullName: z.string().min(1, "Full name is required"),
-  email: z.string().email("Invalid email").endsWith("@parazelsus.pk", {
-    message: "Email must be a company email ending with @parazelsus.pk",
-  }),
+  email: z.string().email("Invalid email address"),
   phoneNumber: z.string().optional(),
   department: z.string().min(1, "Department is required"),
+  divisionCategory: z.string().optional(),
   division: z.string().optional(),
+  sapEmployeeCode: z.string().optional(),
   roleId: z.coerce.number({
     required_error: "Role is required",
     invalid_type_error: "Role must be a number"
@@ -233,7 +235,9 @@ export function EmployeeList() {
       email: "",
       phoneNumber: "",
       department: "",
+      divisionCategory: "",
       division: "",
+      sapEmployeeCode: "",
       roleId: 0,
       active: true,
       cnic: "",
@@ -249,7 +253,9 @@ export function EmployeeList() {
         email: selectedUser.email,
         phoneNumber: selectedUser.phoneNumber || "",
         department: selectedUser.department,
+        divisionCategory: (selectedUser as any).divisionCategory || "",
         division: (selectedUser as any).division || "",
+        sapEmployeeCode: (selectedUser as any).sapEmployeeCode || "",
         roleId: selectedUser.roleId || 0,
         active: selectedUser.active,
         cnic: selectedUser.cnic || "",
@@ -432,13 +438,22 @@ export function EmployeeList() {
 
       {/* Edit Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-[600px] p-0">
+        <DialogContent className="sm:max-w-[650px] p-0 max-h-[90vh] overflow-y-auto">
           <DialogHeader className="px-6 py-4 border-b">
             <DialogTitle className="text-2xl font-semibold">Edit Employee</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               Make changes to the employee information here.
             </DialogDescription>
           </DialogHeader>
+          <Tabs defaultValue="details" className="w-full">
+            <TabsList className="w-full rounded-none border-b px-6 justify-start gap-4 h-auto py-0">
+              <TabsTrigger value="details" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary py-2">Details</TabsTrigger>
+              <TabsTrigger value="assignments" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary py-2">Access & Assignments</TabsTrigger>
+            </TabsList>
+            <TabsContent value="assignments" className="px-6 py-4">
+              {selectedUser && <UserAssignments userId={selectedUser.id} onSaved={() => setIsEditOpen(false)} />}
+            </TabsContent>
+            <TabsContent value="details">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 px-6 py-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -536,12 +551,38 @@ export function EmployeeList() {
                   />
                   <FormField
                     control={form.control}
+                    name="divisionCategory"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-sm font-medium">Division Category <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
+                        <FormControl>
+                          <Input className="h-9" placeholder="e.g. Div A" {...field} value={field.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
                     name="division"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-sm font-medium">Division <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
                         <FormControl>
-                          <Input className="h-9" placeholder="e.g. Sales Division" {...field} value={field.value ?? ""} />
+                          <Input className="h-9" placeholder="e.g. Gynae-A" {...field} value={field.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="sapEmployeeCode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-sm font-medium">Employee Code <span className="text-muted-foreground font-normal">(optional)</span></FormLabel>
+                        <FormControl>
+                          <Input className="h-9" placeholder="e.g. EMP-0001" {...field} value={field.value ?? ""} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -637,6 +678,8 @@ export function EmployeeList() {
               </DialogFooter>
             </form>
           </Form>
+          </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
 

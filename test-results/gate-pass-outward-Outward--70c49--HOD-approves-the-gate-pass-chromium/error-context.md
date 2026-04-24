@@ -1,0 +1,197 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - img "AGP Pharma Logo" [ref=e10]
+          - button "menu" [ref=e11] [cursor=pointer]:
+            - generic [ref=e12]: menu
+        - generic [ref=e13]:
+          - heading "AGP Pharma" [level=1] [ref=e14]
+          - paragraph [ref=e15]: Gate Pass System
+      - navigation [ref=e16]:
+        - list [ref=e17]:
+          - listitem [ref=e18]:
+            - link "dashboard Dashboard" [ref=e19] [cursor=pointer]:
+              - /url: /
+              - generic [ref=e20]:
+                - generic [ref=e21]: dashboard
+                - generic [ref=e22]: Dashboard
+          - listitem [ref=e23]:
+            - link "list_alt Gate Passes" [ref=e24] [cursor=pointer]:
+              - /url: /gate-passes
+              - generic [ref=e25]:
+                - generic [ref=e26]: list_alt
+                - generic [ref=e27]: Gate Passes
+          - listitem [ref=e28]:
+            - link "assessment Reports" [ref=e29] [cursor=pointer]:
+              - /url: /reports
+              - generic [ref=e30]:
+                - generic [ref=e31]: assessment
+                - generic [ref=e32]: Reports
+          - listitem [ref=e33]:
+            - link "qr_code_scanner QR Scanner" [ref=e34] [cursor=pointer]:
+              - /url: /verify-gate-pass
+              - generic [ref=e35]:
+                - generic [ref=e36]: qr_code_scanner
+                - generic [ref=e37]: QR Scanner
+          - listitem [ref=e38]:
+            - link "history Activity Logs" [ref=e39] [cursor=pointer]:
+              - /url: /activity-logs
+              - generic [ref=e40]:
+                - generic [ref=e41]: history
+                - generic [ref=e42]: Activity Logs
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - img "User Avatar" [ref=e45]
+          - generic [ref=e46]:
+            - paragraph [ref=e47]: HOD
+            - paragraph [ref=e48]: HO
+        - button "logout Logout" [ref=e49] [cursor=pointer]:
+          - generic [ref=e50]: logout
+          - generic [ref=e51]: Logout
+        - generic [ref=e52]:
+          - paragraph [ref=e53]: Developed by
+          - paragraph [ref=e54]: Creative Solution Zone
+    - generic [ref=e55]:
+      - banner [ref=e56]:
+        - generic [ref=e58]:
+          - generic [ref=e59]: search
+          - textbox "Search..." [ref=e60]
+        - generic [ref=e61]:
+          - button "Notifications" [ref=e63] [cursor=pointer]:
+            - img [ref=e64]
+            - generic [ref=e67]: "2"
+          - button "help_outline" [ref=e68] [cursor=pointer]:
+            - generic [ref=e69]: help_outline
+          - generic [ref=e71]:
+            - generic [ref=e72]: HOD
+            - generic [ref=e73]: H
+      - main [ref=e74]:
+        - generic [ref=e75]:
+          - heading "Gate Passes List" [level=1] [ref=e76]
+          - link "add Create New" [ref=e77] [cursor=pointer]:
+            - /url: /create-gate-pass
+            - button "add Create New" [ref=e78]:
+              - generic [ref=e79]: add
+              - text: Create New
+        - generic [ref=e80]:
+          - generic [ref=e83]:
+            - generic [ref=e84]:
+              - generic [ref=e85]:
+                - text: Gate Pass Number
+                - textbox "Gate Pass Number" [ref=e86]:
+                  - /placeholder: e.g. PZGP-042
+              - generic [ref=e87]:
+                - text: Customer Name
+                - textbox "Customer Name" [ref=e88]:
+                  - /placeholder: Enter customer name
+              - generic [ref=e89]:
+                - text: Item Name
+                - textbox "Item Name" [ref=e90]:
+                  - /placeholder: Enter item name
+              - generic [ref=e91]:
+                - text: From Date
+                - textbox "From Date" [ref=e92]
+              - generic [ref=e93]:
+                - text: To Date
+                - textbox "To Date" [ref=e94]
+              - generic [ref=e95]:
+                - text: Department
+                - combobox "Department" [ref=e96] [cursor=pointer]:
+                  - generic: All Departments
+                  - img [ref=e97]
+                - combobox [ref=e99]
+              - generic [ref=e100]:
+                - text: Status
+                - combobox "Status" [ref=e101] [cursor=pointer]:
+                  - generic: All Statuses
+                  - img [ref=e102]
+                - combobox [ref=e104]
+              - generic [ref=e105]:
+                - text: Pass Type
+                - combobox "Pass Type" [ref=e106] [cursor=pointer]:
+                  - generic: All Types
+                  - img [ref=e107]
+                - combobox [ref=e109]
+            - generic [ref=e110]:
+              - button "Reset" [ref=e111] [cursor=pointer]
+              - button "search Apply Filters" [ref=e112] [cursor=pointer]:
+                - generic [ref=e113]: search
+                - text: Apply Filters
+          - table [ref=e116]:
+            - rowgroup [ref=e117]:
+              - row "Pass No. arrow_downward Date unfold_more Customer Department Type Status Actions" [ref=e118]:
+                - columnheader [ref=e119]:
+                  - button [ref=e120] [cursor=pointer]:
+                    - img [ref=e121]
+                - columnheader "Pass No. arrow_downward" [ref=e123]:
+                  - generic [ref=e124] [cursor=pointer]:
+                    - text: Pass No.
+                    - generic [ref=e125]: arrow_downward
+                - columnheader "Date unfold_more" [ref=e126]:
+                  - generic [ref=e127] [cursor=pointer]:
+                    - text: Date
+                    - generic [ref=e128]: unfold_more
+                - columnheader "Customer" [ref=e129]
+                - columnheader "Department" [ref=e130]
+                - columnheader "Type" [ref=e131]
+                - columnheader "Status" [ref=e132]
+                - columnheader "Actions" [ref=e133]
+            - rowgroup [ref=e134]:
+              - row "AGP-2603-0003 14 Mar 2026 Apple HO Inward Pending visibility print edit lock" [ref=e135]:
+                - cell [ref=e136]:
+                  - button [ref=e137] [cursor=pointer]:
+                    - img [ref=e138]
+                - cell "AGP-2603-0003" [ref=e140]
+                - cell "14 Mar 2026" [ref=e141]
+                - cell "Apple" [ref=e142]
+                - cell "HO" [ref=e143]
+                - cell "Inward" [ref=e144]
+                - cell "Pending" [ref=e145]
+                - cell "visibility print edit lock" [ref=e146]:
+                  - generic [ref=e147]:
+                    - button "visibility" [ref=e148] [cursor=pointer]:
+                      - generic [ref=e149]: visibility
+                    - button "print" [ref=e150] [cursor=pointer]:
+                      - generic [ref=e151]: print
+                    - button "edit" [ref=e152] [cursor=pointer]:
+                      - generic [ref=e153]: edit
+                    - button "lock" [ref=e154] [cursor=pointer]:
+                      - generic [ref=e155]: lock
+              - row "AGP-2603-0002 13 Mar 2026 Muhammad Rizwan HO Returnable Security Allowed visibility print lock" [ref=e156]:
+                - cell [ref=e157]
+                - cell "AGP-2603-0002" [ref=e158]
+                - cell "13 Mar 2026" [ref=e159]
+                - cell "Muhammad Rizwan" [ref=e160]
+                - cell "HO" [ref=e161]
+                - cell "Returnable" [ref=e162]
+                - cell "Security Allowed" [ref=e163]
+                - cell "visibility print lock" [ref=e164]:
+                  - generic [ref=e165]:
+                    - button "visibility" [ref=e166] [cursor=pointer]:
+                      - generic [ref=e167]: visibility
+                    - button "print" [ref=e168] [cursor=pointer]:
+                      - generic [ref=e169]: print
+                    - button "lock" [ref=e170] [cursor=pointer]:
+                      - generic [ref=e171]: lock
+              - row "AGP-2603-0001 13 Mar 2026 ABC Corporation HO Outward Completed visibility print" [ref=e172]:
+                - cell [ref=e173]
+                - cell "AGP-2603-0001" [ref=e174]
+                - cell "13 Mar 2026" [ref=e175]
+                - cell "ABC Corporation" [ref=e176]
+                - cell "HO" [ref=e177]
+                - cell "Outward" [ref=e178]
+                - cell "Completed" [ref=e179]
+                - cell "visibility print" [ref=e180]:
+                  - generic [ref=e181]:
+                    - button "visibility" [ref=e182] [cursor=pointer]:
+                      - generic [ref=e183]: visibility
+                    - button "print" [ref=e184] [cursor=pointer]:
+                      - generic [ref=e185]: print
+  - region "Notifications (F8)":
+    - list
+```

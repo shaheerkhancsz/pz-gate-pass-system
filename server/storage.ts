@@ -1,6 +1,6 @@
 import {
   users, gatePasses, items, customers, drivers, roles, permissions, userActivityLogs, documents, companies, products,
-  plants, gates, vendors, itemMaster,
+  plants, gates, vendors, itemMaster, reportTemplates,
   type User, type InsertUser,
   type GatePass, type InsertGatePass,
   type Item, type InsertItem,
@@ -9,13 +9,15 @@ import {
   type Role, type Permission,
   type UserActivityLog, type InsertUserActivityLog,
   type Document, type InsertDocument,
-  type Notification,
+  type Notification, type InsertNotification,
+  notifications,
   type Company, type InsertCompany,
   type Product, type InsertProduct,
   type Plant, type InsertPlant,
   type Gate, type InsertGate,
   type Vendor, type InsertVendor,
   type ItemMaster, type InsertItemMaster,
+  type ReportTemplate, type InsertReportTemplate,
 } from "@shared/schema";
 import { db } from "./db";
 import { and, count, desc, eq, gte, ilike, inArray, like, lte, or, sql, isNotNull } from "drizzle-orm";
@@ -57,13 +59,13 @@ export interface IStorage {
 
   // Customer operations
   getCustomer(id: number): Promise<Customer | undefined>;
-  getCustomers(searchTerm?: string): Promise<Customer[]>;
+  getCustomers(searchTerm?: string, companyId?: number): Promise<Customer[]>;
   createCustomer(customer: InsertCustomer): Promise<Customer>;
   updateCustomer(id: number, customer: Partial<InsertCustomer>): Promise<Customer | undefined>;
 
   // Driver operations
   getDriver(id: number): Promise<Driver | undefined>;
-  getDrivers(searchTerm?: string): Promise<Driver[]>;
+  getDrivers(searchTerm?: string, companyId?: number): Promise<Driver[]>;
   getDriverByCnic(cnic: string): Promise<Driver | undefined>;
   createDriver(driver: InsertDriver): Promise<Driver>;
   updateDriver(id: number, driver: Partial<InsertDriver>): Promise<Driver | undefined>;
@@ -77,7 +79,7 @@ export interface IStorage {
     entityType: string;
     dateFrom: Date;
     dateTo: Date;
-  }>): Promise<UserActivityLog[]>;
+  }>, pagination?: { page: number; limit: number }): Promise<{ logs: UserActivityLog[]; total: number }>;
 
   // Statistics
   getStatistics(): Promise<{
@@ -85,6 +87,10 @@ export interface IStorage {
     monthlyPasses: number;
     weeklyPasses: number;
     pendingApprovals: number;
+    pendingHOD: number;
+    pendingSecurity: number;
+    sentBack: number;
+    typeDistribution: { type: string; count: number }[];
     statusDistribution: { status: string; count: number }[];
     departmentDistribution: { department: string; count: number }[];
     monthlyTrend: { month: string; count: number }[];
@@ -94,6 +100,7 @@ export interface IStorage {
   // Document operations
   getDocument(id: number): Promise<Document | undefined>;
   getDocumentsByEntity(entityType: string, entityId: number): Promise<Document[]>;
+  getAllDocuments(filters?: { entityType?: string; search?: string; dateFrom?: Date; dateTo?: Date }): Promise<Omit<Document, 'fileData'>[]>;
   createDocument(document: InsertDocument): Promise<Document>;
   updateDocument(id: number, documentData: Partial<InsertDocument>): Promise<Document | undefined>;
   deleteDocument(id: number): Promise<boolean>;
@@ -104,6 +111,18 @@ export interface IStorage {
   createCompany(company: InsertCompany): Promise<Company>;
   updateCompany(id: number, company: Partial<InsertCompany>): Promise<Company | undefined>;
   deleteCompany(id: number): Promise<boolean>;
+
+  // Password reset operations (Phase 10)
+  setPasswordResetToken(userId: number, token: string, expiry: Date): Promise<void>;
+  getUserByResetToken(token: string): Promise<User | undefined>;
+  clearPasswordResetToken(userId: number): Promise<void>;
+
+  // Notification operations
+  createNotification(notification: InsertNotification): Promise<Notification>;
+  getNotifications(userId: number, limit?: number): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: number): Promise<number>;
+  markNotificationRead(id: number, userId: number): Promise<boolean>;
+  markAllNotificationsRead(userId: number): Promise<boolean>;
 
   // Plants
   getPlants(companyId?: number): Promise<Plant[]>;
@@ -133,8 +152,15 @@ export interface IStorage {
   updateItemMaster(id: number, item: Partial<InsertItemMaster>): Promise<ItemMaster | undefined>;
   deleteItemMaster(id: number): Promise<boolean>;
 
+  // Report Template operations
+  getReportTemplates(userId: number, companyId?: number): Promise<ReportTemplate[]>;
+  getReportTemplate(id: number): Promise<ReportTemplate | undefined>;
+  createReportTemplate(data: InsertReportTemplate): Promise<ReportTemplate>;
+  updateReportTemplate(id: number, data: Partial<InsertReportTemplate>): Promise<ReportTemplate | undefined>;
+  deleteReportTemplate(id: number): Promise<boolean>;
+
   // Utility methods
-  generateGatePassNumber(): Promise<string>;
+  generateGatePassNumber(companyId?: number | null, type?: string, department?: string): Promise<string>;
 }
 
 export class MemStorage implements IStorage {
@@ -156,17 +182,24 @@ export class MemStorage implements IStorage {
     monthlyPasses: number;
     weeklyPasses: number;
     pendingApprovals: number;
+    pendingHOD: number;
+    pendingSecurity: number;
+    sentBack: number;
+    typeDistribution: { type: string; count: number }[];
     statusDistribution: { status: string; count: number }[];
     departmentDistribution: { department: string; count: number }[];
     monthlyTrend: { month: string; count: number }[];
     dailyTrend: { date: string; count: number }[];
   }> {
-    // Dummy implementation for MemStorage (which seems to mirror DatabaseStorage now)
     return {
       totalPasses: 0,
       monthlyPasses: 0,
       weeklyPasses: 0,
       pendingApprovals: 0,
+      pendingHOD: 0,
+      pendingSecurity: 0,
+      sentBack: 0,
+      typeDistribution: [],
       statusDistribution: [],
       departmentDistribution: [],
       monthlyTrend: [],
@@ -191,7 +224,7 @@ export class MemStorage implements IStorage {
     // Add default admin user
     this.createUser({
       fullName: "Admin User",
-      email: "admin@parazelsus.pk",
+      email: "admin@agp.com.pk",
       password: "adminpass", // In a real app, this would be hashed
       department: "HO",
       roleId: 1, // Admin role
@@ -203,7 +236,7 @@ export class MemStorage implements IStorage {
     // Add a default user
     this.createUser({
       fullName: "John Doe",
-      email: "john@parazelsus.pk",
+      email: "john@agp.com.pk",
       password: "password", // In a real app, this would be hashed
       department: "Warehouse",
       roleId: 3, // Staff role
@@ -272,10 +305,17 @@ export class MemStorage implements IStorage {
   }
 
   async createGatePass(gatePass: InsertGatePass): Promise<GatePass> {
-    const gatePassNumber = await this.generateGatePassNumber();
+    const gatePassNumber = await this.generateGatePassNumber(gatePass.companyId, (gatePass as any).type, gatePass.department);
     const [result] = await db
       .insert(gatePasses)
-      .values({ ...gatePass, gatePassNumber });
+      .values({
+        ...gatePass,
+        gatePassNumber,
+        driverName: gatePass.driverName || "",
+        driverMobile: gatePass.driverMobile || "",
+        driverCnic: gatePass.driverCnic || "",
+        deliveryVanNumber: gatePass.deliveryVanNumber || "",
+      });
     const id = result.insertId;
     return this.getGatePass(id) as Promise<GatePass>;
   }
@@ -298,8 +338,8 @@ export class MemStorage implements IStorage {
   async getGatePasses(filters?: Partial<{
     customerName: string;
     department: string;
-    dateFrom: Date;
-    dateTo: Date;
+    dateFrom: string;
+    dateTo: string;
     gatePassNumber: string;
     itemName: string;
     createdById: number;
@@ -313,7 +353,7 @@ export class MemStorage implements IStorage {
       const conditions = [];
 
       if (filters.customerName) {
-        conditions.push(ilike(gatePasses.customerName, `%${filters.customerName}%`));
+        conditions.push(like(gatePasses.customerName, `%${filters.customerName}%`));
       }
 
       if (filters.department) {
@@ -321,15 +361,15 @@ export class MemStorage implements IStorage {
       }
 
       if (filters.dateFrom) {
-        conditions.push(gte(gatePasses.createdAt, filters.dateFrom));
+        conditions.push(gte(sql`DATE(${gatePasses.date})`, filters.dateFrom));
       }
 
       if (filters.dateTo) {
-        conditions.push(lte(gatePasses.createdAt, filters.dateTo));
+        conditions.push(lte(sql`DATE(${gatePasses.date})`, filters.dateTo));
       }
 
       if (filters.gatePassNumber) {
-        conditions.push(eq(gatePasses.gatePassNumber, filters.gatePassNumber));
+        conditions.push(like(gatePasses.gatePassNumber, `%${filters.gatePassNumber}%`));
       }
 
       if (filters.createdById) {
@@ -386,20 +426,22 @@ export class MemStorage implements IStorage {
     return customer;
   }
 
-  async getCustomers(searchTerm?: string): Promise<Customer[]> {
+  async getCustomers(searchTerm?: string, companyId?: number): Promise<Customer[]> {
+    const conditions: any[] = [];
+    if (companyId) conditions.push(eq(customers.companyId, companyId));
     if (searchTerm) {
-      return db
-        .select()
-        .from(customers)
-        .where(
-          or(
-            ilike(customers.name, `%${searchTerm}%`),
-            ilike(customers.email || '', `%${searchTerm}%`),
-            ilike(drivers.mobile, `%${searchTerm}%`)
-          )
-        );
+      conditions.push(
+        or(
+          ilike(customers.name, `%${searchTerm}%`),
+          ilike(customers.phone || '', `%${searchTerm}%`)
+        )
+      );
     }
-    return db.select().from(customers);
+    const query = db.select().from(customers);
+    if (conditions.length > 0) {
+      return (query as any).where(and(...conditions));
+    }
+    return query;
   }
 
   async createCustomer(customer: InsertCustomer): Promise<Customer> {
@@ -424,20 +466,19 @@ export class MemStorage implements IStorage {
     return driver;
   }
 
-  async getDrivers(searchTerm?: string): Promise<Driver[]> {
+  async getDrivers(searchTerm?: string, companyId?: number): Promise<Driver[]> {
+    const conditions: any[] = [];
+    if (companyId) conditions.push(eq(drivers.companyId, companyId));
     if (searchTerm) {
-      return db
-        .select()
-        .from(drivers)
-        .where(
-          or(
-            ilike(drivers.name, `%${searchTerm}%`),
-            ilike(drivers.cnic, `%${searchTerm}%`),
-            ilike(drivers.mobile, `%${searchTerm}%`)
-          )
-        );
+      conditions.push(or(
+        ilike(drivers.name, `%${searchTerm}%`),
+        ilike(drivers.cnic, `%${searchTerm}%`),
+        ilike(drivers.mobile, `%${searchTerm}%`)
+      ));
     }
-    return db.select().from(drivers);
+    const query = db.select().from(drivers);
+    if (conditions.length > 0) return (query as any).where(and(...conditions));
+    return query;
   }
 
   async getDriverByCnic(cnic: string): Promise<Driver | undefined> {
@@ -482,42 +523,30 @@ export class MemStorage implements IStorage {
     entityType: string;
     dateFrom: Date;
     dateTo: Date;
-  }>): Promise<UserActivityLog[]> {
+  }>, pagination?: { page: number; limit: number }): Promise<{ logs: UserActivityLog[]; total: number }> {
     let query: any = db.select().from(userActivityLogs);
 
     if (filters) {
       const conditions = [];
-
-      if (filters.userId) {
-        conditions.push(eq(userActivityLogs.userId, filters.userId));
-      }
-
-      if (filters.userEmail) {
-        conditions.push(ilike(userActivityLogs.userEmail, `%${filters.userEmail}%`));
-      }
-
-      if (filters.actionType) {
-        conditions.push(eq(userActivityLogs.actionType, filters.actionType));
-      }
-
-      if (filters.entityType) {
-        conditions.push(eq(userActivityLogs.entityType, filters.entityType));
-      }
-
-      if (filters.dateFrom) {
-        conditions.push(gte(userActivityLogs.timestamp, filters.dateFrom));
-      }
-
-      if (filters.dateTo) {
-        conditions.push(lte(userActivityLogs.timestamp, filters.dateTo));
-      }
-
-      if (conditions.length > 0) {
-        query = query.where(and(...conditions));
-      }
+      if (filters.userId) conditions.push(eq(userActivityLogs.userId, filters.userId));
+      if (filters.userEmail) conditions.push(ilike(userActivityLogs.userEmail, `%${filters.userEmail}%`));
+      if (filters.actionType) conditions.push(eq(userActivityLogs.actionType, filters.actionType));
+      if (filters.entityType) conditions.push(eq(userActivityLogs.entityType, filters.entityType));
+      if (filters.dateFrom) conditions.push(gte(userActivityLogs.timestamp, filters.dateFrom));
+      if (filters.dateTo) conditions.push(lte(userActivityLogs.timestamp, filters.dateTo));
+      if (conditions.length > 0) query = query.where(and(...conditions));
     }
 
-    return query;
+    const allLogs = await query.orderBy(desc(userActivityLogs.timestamp));
+    const total = allLogs.length;
+
+    if (pagination) {
+      const { page, limit } = pagination;
+      const offset = (page - 1) * limit;
+      return { logs: allLogs.slice(offset, offset + limit), total };
+    }
+
+    return { logs: allLogs, total };
   }
 
   // Document operations
@@ -536,6 +565,22 @@ export class MemStorage implements IStorage {
           eq(documents.entityId, entityId)
         )
       );
+  }
+
+  async getAllDocuments(filters?: { entityType?: string; search?: string; dateFrom?: Date; dateTo?: Date }): Promise<Omit<Document, 'fileData'>[]> {
+    const conditions: any[] = [];
+    if (filters?.entityType) conditions.push(eq(documents.entityType, filters.entityType));
+    if (filters?.search) conditions.push(ilike(documents.fileName, `%${filters.search}%`));
+    if (filters?.dateFrom) conditions.push(gte(documents.createdAt, filters.dateFrom));
+    if (filters?.dateTo) conditions.push(lte(documents.createdAt, filters.dateTo));
+    return db.select({
+      id: documents.id, fileName: documents.fileName, fileType: documents.fileType,
+      fileSize: documents.fileSize, entityType: documents.entityType, entityId: documents.entityId,
+      description: documents.description, uploadedBy: documents.uploadedBy,
+      uploadedByEmail: documents.uploadedByEmail, createdAt: documents.createdAt,
+    }).from(documents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(documents.createdAt));
   }
 
   async createDocument(document: InsertDocument): Promise<Document> {
@@ -557,24 +602,12 @@ export class MemStorage implements IStorage {
   }
 
   // Utility methods
-  async generateGatePassNumber(): Promise<string> {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = (today.getMonth() + 1).toString().padStart(2, '0');
-    const day = today.getDate().toString().padStart(2, '0');
-
-    const [{ count: countVal }] = await db
-      .select({ count: count() })
-      .from(gatePasses)
-      .where(
-        and(
-          gte(gatePasses.createdAt, new Date(year, today.getMonth(), 1)),
-          lte(gatePasses.createdAt, new Date(year, today.getMonth() + 1, 0))
-        )
-      );
-
-    const sequence = (countVal + 1).toString().padStart(4, '0');
-    return `GP${year}${month}${day}${sequence}`;
+  async generateGatePassNumber(_companyId?: number | null, _type?: string, _department?: string): Promise<string> {
+    const now = new Date();
+    const yy = now.getFullYear().toString().slice(2);
+    const mm = (now.getMonth() + 1).toString().padStart(2, '0');
+    const seq = (this.gatePasses.size + 1).toString().padStart(4, '0');
+    return `GP-${yy}${mm}-${seq}`;
   }
 
   // Company operations (MemStorage delegates to DB)
@@ -629,6 +662,25 @@ export class MemStorage implements IStorage {
   async createItemMaster(_item: InsertItemMaster): Promise<ItemMaster> { throw new Error("Use DatabaseStorage"); }
   async updateItemMaster(_id: number, _item: Partial<InsertItemMaster>): Promise<ItemMaster | undefined> { return undefined; }
   async deleteItemMaster(_id: number): Promise<boolean> { return false; }
+
+  // Notifications (stubs)
+  async createNotification(_n: InsertNotification): Promise<Notification> { throw new Error("Use DatabaseStorage"); }
+  async getNotifications(_userId: number, _limit?: number): Promise<Notification[]> { return []; }
+  async getUnreadNotificationCount(_userId: number): Promise<number> { return 0; }
+  async markNotificationRead(_id: number, _userId: number): Promise<boolean> { return false; }
+  async markAllNotificationsRead(_userId: number): Promise<boolean> { return false; }
+
+  // Password reset (stubs)
+  async setPasswordResetToken(_userId: number, _token: string, _expiry: Date): Promise<void> {}
+  async getUserByResetToken(_token: string): Promise<User | undefined> { return undefined; }
+  async clearPasswordResetToken(_userId: number): Promise<void> {}
+
+  // Report Template (stubs)
+  async getReportTemplates(_userId: number, _companyId?: number): Promise<ReportTemplate[]> { return []; }
+  async getReportTemplate(_id: number): Promise<ReportTemplate | undefined> { return undefined; }
+  async createReportTemplate(_data: InsertReportTemplate): Promise<ReportTemplate> { throw new Error("Use DatabaseStorage"); }
+  async updateReportTemplate(_id: number, _data: Partial<InsertReportTemplate>): Promise<ReportTemplate | undefined> { return undefined; }
+  async deleteReportTemplate(_id: number): Promise<boolean> { return false; }
 }
 
 // Database storage implementation
@@ -650,46 +702,41 @@ export class DatabaseStorage implements IStorage {
     entityType: string;
     dateFrom: Date;
     dateTo: Date;
-  }>): Promise<UserActivityLog[]> {
-    let query: any = db.select().from(userActivityLogs);
+  }>, pagination?: { page: number; limit: number }): Promise<{ logs: UserActivityLog[]; total: number }> {
+    const conditions: any[] = [];
 
     if (filters) {
-      const conditions = [];
-
-      if (filters.userId) {
-        conditions.push(eq(userActivityLogs.userId, filters.userId));
-      }
-
-      if (filters.userEmail) {
-        conditions.push(ilike(userActivityLogs.userEmail, `%${filters.userEmail}%`));
-      }
-
-      if (filters.actionType) {
-        conditions.push(eq(userActivityLogs.actionType, filters.actionType));
-      }
-
-      if (filters.entityType) {
-        conditions.push(eq(userActivityLogs.entityType, filters.entityType));
-      }
-
-      if (filters.dateFrom && filters.dateTo) {
-        conditions.push(and(
-          gte(userActivityLogs.timestamp, filters.dateFrom),
-          lte(userActivityLogs.timestamp, filters.dateTo)
-        ));
-      } else if (filters.dateFrom) {
-        conditions.push(gte(userActivityLogs.timestamp, filters.dateFrom));
-      } else if (filters.dateTo) {
-        conditions.push(lte(userActivityLogs.timestamp, filters.dateTo));
-      }
-
-      if (conditions.length > 0) {
-        query = query.where(and(...conditions));
-      }
+      if (filters.userId) conditions.push(eq(userActivityLogs.userId, filters.userId));
+      if (filters.userEmail) conditions.push(ilike(userActivityLogs.userEmail, `%${filters.userEmail}%`));
+      if (filters.actionType) conditions.push(eq(userActivityLogs.actionType, filters.actionType));
+      if (filters.entityType) conditions.push(eq(userActivityLogs.entityType, filters.entityType));
+      if (filters.dateFrom) conditions.push(gte(userActivityLogs.timestamp, filters.dateFrom));
+      if (filters.dateTo) conditions.push(lte(userActivityLogs.timestamp, filters.dateTo));
     }
 
-    // Sort by timestamp, newest first
-    return query.orderBy(desc(userActivityLogs.timestamp));
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Count total
+    const [{ cnt }] = await db
+      .select({ cnt: sql<number>`count(*)` })
+      .from(userActivityLogs)
+      .where(whereClause as any);
+    const total = Number(cnt);
+
+    // Fetch page
+    let logsQuery: any = db
+      .select()
+      .from(userActivityLogs)
+      .where(whereClause as any)
+      .orderBy(desc(userActivityLogs.timestamp));
+
+    if (pagination) {
+      const { page, limit } = pagination;
+      logsQuery = logsQuery.limit(limit).offset((page - 1) * limit);
+    }
+
+    const logs = await logsQuery;
+    return { logs, total };
   }
   // User operations
   async getUser(id: number): Promise<User | undefined> {
@@ -761,7 +808,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createGatePass(insertGatePass: InsertGatePass): Promise<GatePass> {
-    const gatePassNumber = await this.generateGatePassNumber();
+    const gatePassNumber = await this.generateGatePassNumber(insertGatePass.companyId, (insertGatePass as any).type, insertGatePass.department);
 
     const [result] = await db
       .insert(gatePasses)
@@ -769,6 +816,10 @@ export class DatabaseStorage implements IStorage {
         ...insertGatePass,
         gatePassNumber,
         status: insertGatePass.status || 'pending',
+        driverName: insertGatePass.driverName || "",
+        driverMobile: insertGatePass.driverMobile || "",
+        driverCnic: insertGatePass.driverCnic || "",
+        deliveryVanNumber: insertGatePass.deliveryVanNumber || "",
       });
     const id = result.insertId;
     const [gatePass] = await db.select().from(gatePasses).where(eq(gatePasses.id, id));
@@ -802,8 +853,8 @@ export class DatabaseStorage implements IStorage {
   async getGatePasses(filters?: Partial<{
     customerName: string;
     department: string;
-    dateFrom: Date;
-    dateTo: Date;
+    dateFrom: string;   // YYYY-MM-DD string — avoids timezone conversion issues
+    dateTo: string;     // YYYY-MM-DD string
     gatePassNumber: string;
     itemName: string;
     createdById: number;
@@ -817,7 +868,8 @@ export class DatabaseStorage implements IStorage {
       const conditions = [];
 
       if (filters.customerName) {
-        conditions.push(ilike(gatePasses.customerName, `%${filters.customerName}%`));
+        // MySQL LIKE is already case-insensitive with utf8mb4_unicode_ci
+        conditions.push(like(gatePasses.customerName, `%${filters.customerName}%`));
       }
 
       if (filters.department) {
@@ -825,7 +877,7 @@ export class DatabaseStorage implements IStorage {
       }
 
       if (filters.gatePassNumber) {
-        conditions.push(ilike(gatePasses.gatePassNumber, `%${filters.gatePassNumber}%`));
+        conditions.push(like(gatePasses.gatePassNumber, `%${filters.gatePassNumber}%`));
       }
 
       if (filters.createdById) {
@@ -844,30 +896,25 @@ export class DatabaseStorage implements IStorage {
         conditions.push(eq((gatePasses as any).type, filters.type));
       }
 
-      if (filters.dateFrom && filters.dateTo) {
-        conditions.push(and(
-          gte(sql`DATE(${gatePasses.date})`, sql`DATE(${filters.dateFrom.toISOString()})`),
-          lte(sql`DATE(${gatePasses.date})`, sql`DATE(${filters.dateTo.toISOString()})`)
-        ));
-      } else if (filters.dateFrom) {
-        conditions.push(gte(sql`DATE(${gatePasses.date})`, sql`DATE(${filters.dateFrom.toISOString()})`));
-      } else if (filters.dateTo) {
-        conditions.push(lte(sql`DATE(${gatePasses.date})`, sql`DATE(${filters.dateTo.toISOString()})`));
+      if (filters.dateFrom) {
+        conditions.push(gte(sql`DATE(${gatePasses.date})`, filters.dateFrom));
+      }
+      if (filters.dateTo) {
+        conditions.push(lte(sql`DATE(${gatePasses.date})`, filters.dateTo));
       }
 
       if (filters.itemName) {
-        // Need to find gate passes with matching items
+        // Find gate passes that have a matching item name
         const matchingGatePassIds = await db
           .select({ gatePassId: items.gatePassId })
           .from(items)
-          .where(ilike(items.name, `%${filters.itemName}%`));
+          .where(like(items.name, `%${filters.itemName}%`));
 
         const ids = matchingGatePassIds.map(item => item.gatePassId);
 
         if (ids.length > 0) {
           conditions.push(inArray(gatePasses.id, ids));
         } else {
-          // No items match, return empty result
           return [];
         }
       }
@@ -916,18 +963,21 @@ export class DatabaseStorage implements IStorage {
     return customer || undefined;
   }
 
-  async getCustomers(searchTerm?: string): Promise<Customer[]> {
-    let query: any = db.select().from(customers);
-
+  async getCustomers(searchTerm?: string, companyId?: number): Promise<Customer[]> {
+    const conditions: any[] = [];
+    if (companyId) conditions.push(eq(customers.companyId, companyId));
     if (searchTerm) {
-      query = query.where(
+      conditions.push(
         or(
           ilike(customers.name, `%${searchTerm}%`),
-          ilike(customers.contactPerson, `%${searchTerm}%`)
+          ilike(customers.phone || '', `%${searchTerm}%`)
         )
       );
     }
-
+    let query: any = db.select().from(customers);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
+    }
     return query.orderBy(customers.name);
   }
 
@@ -968,19 +1018,18 @@ export class DatabaseStorage implements IStorage {
     return driver || undefined;
   }
 
-  async getDrivers(searchTerm?: string): Promise<Driver[]> {
-    let query: any = db.select().from(drivers);
-
+  async getDrivers(searchTerm?: string, companyId?: number): Promise<Driver[]> {
+    const conditions: any[] = [];
+    if (companyId) conditions.push(eq(drivers.companyId, companyId));
     if (searchTerm) {
-      query = query.where(
-        or(
-          ilike(drivers.name, `%${searchTerm}%`),
-          ilike(drivers.cnic, `%${searchTerm}%`),
-          ilike(drivers.mobile, `%${searchTerm}%`)
-        )
-      );
+      conditions.push(or(
+        ilike(drivers.name, `%${searchTerm}%`),
+        ilike(drivers.cnic, `%${searchTerm}%`),
+        ilike(drivers.mobile, `%${searchTerm}%`)
+      ));
     }
-
+    let query: any = db.select().from(drivers);
+    if (conditions.length > 0) query = query.where(and(...conditions));
     return query.orderBy(drivers.name);
   }
 
@@ -1073,6 +1122,25 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(documents.createdAt));
   }
 
+  async getAllDocuments(filters?: { entityType?: string; search?: string; dateFrom?: Date; dateTo?: Date }): Promise<Omit<Document, 'fileData'>[]> {
+    const conditions: any[] = [];
+    if (filters?.entityType) conditions.push(eq(documents.entityType, filters.entityType));
+    if (filters?.search) conditions.push(ilike(documents.fileName, `%${filters.search}%`));
+    if (filters?.dateFrom) conditions.push(gte(documents.createdAt, filters.dateFrom));
+    if (filters?.dateTo) {
+      const d = new Date(filters.dateTo); d.setHours(23, 59, 59, 999);
+      conditions.push(lte(documents.createdAt, d));
+    }
+    return db.select({
+      id: documents.id, fileName: documents.fileName, fileType: documents.fileType,
+      fileSize: documents.fileSize, entityType: documents.entityType, entityId: documents.entityId,
+      description: documents.description, uploadedBy: documents.uploadedBy,
+      uploadedByEmail: documents.uploadedByEmail, createdAt: documents.createdAt,
+    }).from(documents)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(documents.createdAt));
+  }
+
   async createDocument(document: InsertDocument): Promise<Document> {
     const [result] = await db
       .insert(documents)
@@ -1101,6 +1169,10 @@ export class DatabaseStorage implements IStorage {
     monthlyPasses: number;
     weeklyPasses: number;
     pendingApprovals: number;
+    pendingHOD: number;
+    pendingSecurity: number;
+    sentBack: number;
+    typeDistribution: { type: string; count: number }[];
     statusDistribution: { status: string; count: number }[];
     departmentDistribution: { department: string; count: number }[];
     monthlyTrend: { month: string; count: number }[];
@@ -1131,11 +1203,33 @@ export class DatabaseStorage implements IStorage {
       .from(gatePasses)
       .where(gte(gatePasses.createdAt, startOfWeek));
 
-    // Get pending approvals
-    const [{ count: pendingApprovals }] = await db
+    // Workflow pending counts
+    const [{ count: pendingHOD }] = await db
       .select({ count: count() })
       .from(gatePasses)
       .where(eq(gatePasses.status, 'pending'));
+
+    const [{ count: pendingSecurity }] = await db
+      .select({ count: count() })
+      .from(gatePasses)
+      .where(eq(gatePasses.status, 'hod_approved'));
+
+    const [{ count: sentBackCount }] = await db
+      .select({ count: count() })
+      .from(gatePasses)
+      .where(eq(gatePasses.status, 'sent_back'));
+
+    const pendingApprovals = Number(pendingHOD) + Number(pendingSecurity) + Number(sentBackCount);
+
+    // Get type distribution
+    const typeDistribution = await db
+      .select({
+        type: gatePasses.type,
+        count: count()
+      })
+      .from(gatePasses)
+      .groupBy(gatePasses.type)
+      .orderBy(desc(count()));
 
     // Get status distribution
     const statusDistribution = await db
@@ -1187,7 +1281,11 @@ export class DatabaseStorage implements IStorage {
       totalPasses: Number(totalPasses),
       monthlyPasses: Number(monthlyPasses),
       weeklyPasses: Number(weeklyPasses),
-      pendingApprovals: Number(pendingApprovals),
+      pendingApprovals,
+      pendingHOD: Number(pendingHOD),
+      pendingSecurity: Number(pendingSecurity),
+      sentBack: Number(sentBackCount),
+      typeDistribution,
       statusDistribution,
       departmentDistribution,
       monthlyTrend,
@@ -1196,38 +1294,65 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Utility methods
-  async generateGatePassNumber(): Promise<string> {
+  async generateGatePassNumber(companyId?: number | null, type?: string, department?: string): Promise<string> {
     const now = new Date();
-    const year = now.getFullYear().toString().slice(2);  // Get last two digits of year
-    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const year = now.getFullYear().toString(); // full 4-digit year e.g. 2026
 
-    // Find the latest gate pass number to increment it
-    const latestGatePass = await db
-      .select({ number: gatePasses.gatePassNumber })
-      .from(gatePasses)
-      .orderBy(desc(gatePasses.createdAt))
-      .limit(1);
+    // Type prefix: OWNR (non-returnable outward), OWR (returnable), INW (inward)
+    let typePrefix: string;
+    if (type === "returnable") {
+      typePrefix = "OWR";
+    } else if (type === "inward") {
+      typePrefix = "INW";
+    } else {
+      typePrefix = "OWNR"; // default: outward non-returnable
+    }
 
-    let sequenceNumber = 1;
-
-    if (latestGatePass.length > 0 && latestGatePass[0].number) {
-      const latestNumber = latestGatePass[0].number;
-      // Try matching our current format: PZGP-001
-      let matches = latestNumber.match(/PZGP-(\d+)/);
-
-      if (matches && matches[1]) {
-        sequenceNumber = parseInt(matches[1], 10) + 1;
-      } else {
-        // Try matching our new desired format: PZ-YYMM-0001
-        matches = latestNumber.match(/PZ-\d{4}-(\d{4})/);
-        if (matches && matches[1]) {
-          sequenceNumber = parseInt(matches[1], 10) + 1;
-        }
+    // Company code from DB (e.g. AG01)
+    let companyCode = "XX";
+    if (companyId) {
+      const [company] = await db
+        .select({ code: companies.code })
+        .from(companies)
+        .where(eq(companies.id, companyId))
+        .limit(1);
+      if (company?.code?.trim()) {
+        companyCode = company.code.trim().toUpperCase();
       }
     }
 
-    // Use the new format: PZ-YYMM-0001
-    return `PZ-${year}${month}-${sequenceNumber.toString().padStart(4, '0')}`;
+    // Department initials: first letter of each word, uppercase
+    // e.g. "Information Solutions" → "IS", "Supply Chain" → "SC", "Finance" → "FIN"
+    let deptCode = "GN"; // generic default
+    if (department?.trim()) {
+      const words = department.trim().split(/\s+/);
+      if (words.length === 1) {
+        deptCode = words[0].slice(0, 3).toUpperCase();
+      } else {
+        deptCode = words.map(w => w[0]).join("").toUpperCase();
+      }
+    }
+
+    // Find the highest sequence for this company in the current year
+    const latestGatePasses = await db
+      .select({ number: gatePasses.gatePassNumber })
+      .from(gatePasses)
+      .where(companyId ? eq(gatePasses.companyId, companyId) : sql`1=1`)
+      .orderBy(desc(gatePasses.createdAt))
+      .limit(50); // look at last 50 to find max sequence
+
+    let sequenceNumber = 1;
+    for (const row of latestGatePasses) {
+      if (!row.number) continue;
+      // Match new format: PREFIX-COMPANYCODE-DEPT-YEAR-NNNN
+      const m = row.number.match(/-(\d{4})$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n >= sequenceNumber) sequenceNumber = n + 1;
+      }
+    }
+
+    return `${typePrefix}-${companyCode}-${deptCode}-${year}-${sequenceNumber.toString().padStart(4, '0')}`;
   }
 
   // Company operations
@@ -1348,6 +1473,98 @@ export class DatabaseStorage implements IStorage {
   async deleteItemMaster(id: number): Promise<boolean> {
     await db.update(itemMaster).set({ active: false } as any).where(eq(itemMaster.id, id));
     return true;
+  }
+
+  // Notification operations
+  async createNotification(notification: InsertNotification): Promise<Notification> {
+    const [r] = await db.insert(notifications).values(notification);
+    const [row] = await db.select().from(notifications).where(eq(notifications.id, (r as any).insertId));
+    return row;
+  }
+
+  async getNotifications(userId: number, limit = 50): Promise<Notification[]> {
+    return db.select().from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+  }
+
+  async getUnreadNotificationCount(userId: number): Promise<number> {
+    const [row] = await db.select({ cnt: count() }).from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.read, false)));
+    return row?.cnt ?? 0;
+  }
+
+  async markNotificationRead(id: number, userId: number): Promise<boolean> {
+    await db.update(notifications)
+      .set({ read: true })
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)));
+    return true;
+  }
+
+  async markAllNotificationsRead(userId: number): Promise<boolean> {
+    await db.update(notifications)
+      .set({ read: true })
+      .where(eq(notifications.userId, userId));
+    return true;
+  }
+
+  // Password reset operations (Phase 10)
+  async setPasswordResetToken(userId: number, token: string, expiry: Date): Promise<void> {
+    await db.update(users)
+      .set({ passwordResetToken: token, passwordResetExpiry: expiry } as any)
+      .where(eq(users.id, userId));
+  }
+
+  async getUserByResetToken(token: string): Promise<User | undefined> {
+    const [row] = await db.select().from(users)
+      .where(eq(users.passwordResetToken as any, token))
+      .limit(1);
+    return row ?? undefined;
+  }
+
+  async clearPasswordResetToken(userId: number): Promise<void> {
+    await db.update(users)
+      .set({ passwordResetToken: null, passwordResetExpiry: null } as any)
+      .where(eq(users.id, userId));
+  }
+
+  // Report Template operations
+  async getReportTemplates(userId: number, companyId?: number): Promise<ReportTemplate[]> {
+    if (companyId) {
+      // Also include shared templates for the same company
+      return db.select().from(reportTemplates)
+        .where(or(
+          eq(reportTemplates.userId, userId),
+          and(eq(reportTemplates.isShared, true), eq(reportTemplates.companyId, companyId))
+        ))
+        .orderBy(desc(reportTemplates.createdAt));
+    }
+    return db.select().from(reportTemplates)
+      .where(eq(reportTemplates.userId, userId))
+      .orderBy(desc(reportTemplates.createdAt));
+  }
+
+  async getReportTemplate(id: number): Promise<ReportTemplate | undefined> {
+    const [row] = await db.select().from(reportTemplates).where(eq(reportTemplates.id, id));
+    return row ?? undefined;
+  }
+
+  async createReportTemplate(data: InsertReportTemplate): Promise<ReportTemplate> {
+    const [r] = await db.insert(reportTemplates).values(data);
+    return this.getReportTemplate((r as any).insertId) as Promise<ReportTemplate>;
+  }
+
+  async updateReportTemplate(id: number, data: Partial<InsertReportTemplate>): Promise<ReportTemplate | undefined> {
+    await db.update(reportTemplates)
+      .set({ ...data, updatedAt: new Date() } as any)
+      .where(eq(reportTemplates.id, id));
+    return this.getReportTemplate(id);
+  }
+
+  async deleteReportTemplate(id: number): Promise<boolean> {
+    const [result] = await db.delete(reportTemplates).where(eq(reportTemplates.id, id));
+    return (result as any).affectedRows > 0;
   }
 }
 

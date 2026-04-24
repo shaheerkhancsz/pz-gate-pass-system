@@ -1,0 +1,1 @@
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS item_input_mode VARCHAR(20) NOT NULL DEFAULT 'items';

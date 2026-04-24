@@ -16,6 +16,31 @@ import autoTable from 'jspdf-autotable';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/contexts/AuthContext";
+
+function getStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    pending: "Pending",
+    hod_approved: "HOD Approved",
+    security_allowed: "Security Allowed",
+    completed: "Completed",
+    rejected: "Rejected",
+    sent_back: "Sent Back",
+  };
+  return labels[status] || status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ");
+}
+
+function getStatusBadgeClass(status: string): string {
+  switch (status) {
+    case "completed": return "bg-success bg-opacity-10 text-success";
+    case "pending": return "bg-warning bg-opacity-10 text-warning";
+    case "hod_approved": return "bg-blue-100 text-blue-700";
+    case "security_allowed": return "bg-purple-100 text-purple-700";
+    case "rejected": return "bg-red-100 text-red-700";
+    case "sent_back": return "bg-orange-100 text-orange-700";
+    default: return "bg-info bg-opacity-10 text-info";
+  }
+}
 
 interface ReportFilters {
   dateFrom: string;
@@ -25,6 +50,8 @@ interface ReportFilters {
   driverName: string;
   itemName: string;
   status: string;
+  type: string;
+  companyId: string;
   createdBy: string;
   vehicleNumber: string;
   sortBy: string;
@@ -35,11 +62,22 @@ interface ReportFilters {
 export function ReportsPanel() {
   const tableRef = useRef<HTMLTableElement>(null);
   const isMobile = useIsMobile();
+  const { isAdmin } = useAuth();
   const { data: departments = [] } = useDepartments();
+  const { data: companies = [] } = useQuery<{ id: number; name: string; shortName: string | null; active: boolean }[]>({
+    queryKey: ["/api/companies"],
+    queryFn: async () => {
+      const response = await fetch("/api/companies");
+      if (!response.ok) throw new Error("Failed to fetch companies");
+      return response.json();
+    },
+    enabled: isAdmin,
+  });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [selectedColumns, setSelectedColumns] = useState({
     gatePassNumber: true,
     date: true,
+    type: true,
     customer: true,
     department: true,
     driver: true,
@@ -61,6 +99,8 @@ export function ReportsPanel() {
     driverName: "",
     itemName: "",
     status: "",
+    type: "",
+    companyId: "",
     createdBy: "",
     vehicleNumber: "",
     sortBy: "date",
@@ -103,8 +143,8 @@ export function ReportsPanel() {
 
   // Handle filter change
   const handleFilterChange = (key: keyof ReportFilters, value: string) => {
-    // If department or status is set to "all", treat it as an empty string for API filtering
-    if ((key === "department" || key === "status") && value === "all") {
+    // If select-based filters are set to "all", treat as empty string for API filtering
+    if (value === "all") {
       setFilters({ ...filters, [key]: "" });
     } else {
       setFilters({ ...filters, [key]: value });
@@ -128,6 +168,7 @@ export function ReportsPanel() {
       gatePasses.map(pass => ({
         "Gate Pass No.": pass.gatePassNumber,
         "Date": formatDate(pass.date),
+        "Type": ((pass as any).type || "outward").charAt(0).toUpperCase() + ((pass as any).type || "outward").slice(1),
         "Customer": pass.customerName,
         "Customer Phone": pass.customerPhone || "-",
         "Delivery Address": pass.deliveryAddress || "-",
@@ -135,7 +176,7 @@ export function ReportsPanel() {
         "Driver Name": pass.driverName,
         "Driver Mobile": pass.driverMobile,
         "Vehicle Number": pass.deliveryVanNumber,
-        "Status": pass.status,
+        "Status": getStatusLabel(pass.status),
         "Created By": pass.createdBy,
         "Created Date": formatDate(pass.createdAt),
         "Notes": pass.notes || "-"
@@ -190,22 +231,25 @@ export function ReportsPanel() {
     let filterText = "Filters: ";
     if (filters.dateFrom) filterText += `From ${filters.dateFrom} `;
     if (filters.dateTo) filterText += `To ${filters.dateTo} `;
+    if (filters.type) filterText += `Type: ${filters.type} `;
     if (filters.department) filterText += `Department: ${filters.department} `;
     if (filters.customerName) filterText += `Customer: ${filters.customerName} `;
     if (filters.driverName) filterText += `Driver: ${filters.driverName} `;
     if (filters.itemName) filterText += `Item: ${filters.itemName} `;
+    if (filters.status) filterText += `Status: ${getStatusLabel(filters.status)} `;
 
     doc.text(filterText, 14, 38);
 
     // Create main gate passes table
-    const tableColumn = ["Gate Pass No.", "Date", "Customer", "Department", "Driver Name", "Status"];
+    const tableColumn = ["Gate Pass No.", "Date", "Type", "Customer", "Department", "Driver Name", "Status"];
     const tableRows = gatePasses.map(pass => [
       pass.gatePassNumber,
       formatDate(pass.date),
+      ((pass as any).type || "outward").charAt(0).toUpperCase() + ((pass as any).type || "outward").slice(1),
       pass.customerName,
       pass.department,
       pass.driverName,
-      pass.status,
+      getStatusLabel(pass.status),
     ]);
 
     // @ts-ignore - jsPDF autotable types are not fully compatible
@@ -396,6 +440,46 @@ export function ReportsPanel() {
               className="mt-1"
             />
           </div>
+
+          <div>
+            <Label htmlFor="type">Gate Pass Type</Label>
+            <Select
+              value={filters.type || "all"}
+              onValueChange={(value) => handleFilterChange("type", value)}
+            >
+              <SelectTrigger id="type" className="mt-1">
+                <SelectValue placeholder="All Types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="outward">Outward</SelectItem>
+                <SelectItem value="inward">Inward</SelectItem>
+                <SelectItem value="returnable">Returnable</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {isAdmin && (
+            <div>
+              <Label htmlFor="companyId">Company</Label>
+              <Select
+                value={filters.companyId || "all"}
+                onValueChange={(value) => handleFilterChange("companyId", value)}
+              >
+                <SelectTrigger id="companyId" className="mt-1">
+                  <SelectValue placeholder="All Companies" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Companies</SelectItem>
+                  {companies.filter(c => c.active !== false).map((company) => (
+                    <SelectItem key={company.id} value={company.id.toString()}>
+                      {company.name} {company.shortName ? `(${company.shortName})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         {/* Advanced Filters Toggle */}
@@ -430,9 +514,11 @@ export function ReportsPanel() {
                         <SelectContent>
                           <SelectItem value="all">All Statuses</SelectItem>
                           <SelectItem value="pending">Pending</SelectItem>
-                          <SelectItem value="approved">Approved</SelectItem>
+                          <SelectItem value="hod_approved">HOD Approved</SelectItem>
+                          <SelectItem value="security_allowed">Security Allowed</SelectItem>
                           <SelectItem value="completed">Completed</SelectItem>
                           <SelectItem value="rejected">Rejected</SelectItem>
+                          <SelectItem value="sent_back">Sent Back</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -634,6 +720,17 @@ export function ReportsPanel() {
 
                     <div className="flex items-center space-x-2">
                       <Checkbox
+                        id="col-type"
+                        checked={selectedColumns.type}
+                        onCheckedChange={() =>
+                          setSelectedColumns({ ...selectedColumns, type: !selectedColumns.type })
+                        }
+                      />
+                      <Label htmlFor="col-type" className="text-sm">Type</Label>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
                         id="col-driver-mobile"
                         checked={selectedColumns.driverMobile}
                         onCheckedChange={() =>
@@ -702,6 +799,8 @@ export function ReportsPanel() {
                   driverName: "",
                   itemName: "",
                   status: "",
+                  type: "",
+                  companyId: "",
                   createdBy: "",
                   vehicleNumber: "",
                   sortBy: "date",
@@ -756,6 +855,9 @@ export function ReportsPanel() {
                   {selectedColumns.date && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Date</th>
                   )}
+                  {selectedColumns.type && (
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Type</th>
+                  )}
                   {selectedColumns.customer && (
                     <th className="px-6 py-3 text-left text-xs font-medium text-neutral-dark tracking-wider">Customer</th>
                   )}
@@ -805,6 +907,9 @@ export function ReportsPanel() {
                         {selectedColumns.date && (
                           <td className="px-6 py-4 text-sm text-neutral-dark">{formatDate(pass.date)}</td>
                         )}
+                        {selectedColumns.type && (
+                          <td className="px-6 py-4 text-sm text-neutral-dark capitalize">{(pass as any).type || "outward"}</td>
+                        )}
                         {selectedColumns.customer && (
                           <td className="px-6 py-4 text-sm text-neutral-dark">{pass.customerName}</td>
                         )}
@@ -825,15 +930,8 @@ export function ReportsPanel() {
                         )}
                         {selectedColumns.status && (
                           <td className="px-6 py-4 text-sm">
-                            <span className={`px-2 py-1 text-xs rounded-full ${pass.status === "completed"
-                                ? "bg-success bg-opacity-10 text-success"
-                                : pass.status === "pending"
-                                  ? "bg-warning bg-opacity-10 text-warning"
-                                  : pass.status === "approved"
-                                    ? "bg-info bg-opacity-10 text-info"
-                                    : "bg-error bg-opacity-10 text-error"
-                              }`}>
-                              {pass.status.charAt(0).toUpperCase() + pass.status.slice(1)}
+                            <span className={`px-2 py-1 text-xs rounded-full ${getStatusBadgeClass(pass.status)}`}>
+                              {getStatusLabel(pass.status)}
                             </span>
                           </td>
                         )}

@@ -1,60 +1,82 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { useParams, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { PrintableGatePass } from "@/components/gate-pass/PrintableGatePass";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+interface GatePassStatus {
+  id: number;
+  status: string;
+  gatePassNumber: string;
+}
 
 export default function PrintGatePass() {
   const { id } = useParams();
-  const [copyType, setCopyType] = useState<"record" | "driver" | "guard">("record");
   const gatePassId = parseInt(id || "0", 10);
 
-  // Removed auto-print functionality as requested
+  const { data, isLoading } = useQuery<GatePassStatus>({
+    queryKey: [`/api/gate-passes/${gatePassId}`],
+  });
 
   const handlePrint = () => {
     window.print();
   };
 
-  const handleCopyTypeChange = (value: string) => {
-    setCopyType(value as "record" | "driver" | "guard");
-  };
+  // Gate pass is "approved" if status is approved, security_allowed, or completed
+  const isApproved = data && ["approved", "security_allowed", "completed", "force_closed"].includes(data.status);
 
   return (
     <div className="print-container">
-      {/* Print Controls - This entire section will be hidden when printing */}
+      {/* Print Controls — hidden when printing */}
       <div className="p-6 no-print">
-        <div className="mb-6 flex justify-between">
+        <div className="mb-4 flex justify-between items-center">
           <Link href="/gate-passes">
-            <Button>
+            <Button variant="outline">
               <span className="material-icons mr-1">arrow_back</span>
               Back to Gate Passes
             </Button>
           </Link>
           <Button onClick={handlePrint} className="bg-primary">
             <span className="material-icons mr-1">print</span>
-            Print
+            Print {isApproved ? "(2 Copies)" : "(Not Approved)"}
           </Button>
         </div>
-
-        <Card className="mb-6">
-          <CardContent className="p-6">
-            <h3 className="text-lg font-medium mb-4">Select Copy Type</h3>
-            <Tabs value={copyType} onValueChange={handleCopyTypeChange}>
-              <TabsList className="mb-4">
-                <TabsTrigger value="record">Record Copy</TabsTrigger>
-                <TabsTrigger value="driver">Driver Copy</TabsTrigger>
-                <TabsTrigger value="guard">Guard Copy</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </CardContent>
-        </Card>
+        {!isLoading && !isApproved && (
+          <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-md text-sm text-orange-700">
+            This gate pass has not been approved yet. Printing will show a "NOT APPROVED" label.
+          </div>
+        )}
+        {!isLoading && isApproved && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-700">
+            Approved gate pass — printing 2 copies: Security Copy + Vendor/Customer/Employee Copy.
+          </div>
+        )}
       </div>
 
-      {/* Printable Content - Only this will be visible when printing */}
-      <div className="print-only">
-        <PrintableGatePass gatePassId={gatePassId} copyType={copyType} />
-      </div>
+      {/* Printable Content (also visible on screen as a preview) */}
+      {!isLoading && (
+        isApproved ? (
+          <>
+            {/* Copy 1: Security Copy */}
+            <PrintableGatePass gatePassId={gatePassId} copyType="security" />
+
+            {/* Screen separator between copies (hidden when printing — real page break handles it) */}
+            <div className="no-print mx-auto max-w-4xl px-3 sm:px-8 my-4 flex items-center gap-3">
+              <div className="flex-1 border-t border-dashed border-gray-300" />
+              <span className="text-xs text-gray-400 uppercase tracking-widest">Page 2 — Vendor / Customer / Employee Copy</span>
+              <div className="flex-1 border-t border-dashed border-gray-300" />
+            </div>
+
+            {/* Page break for print */}
+            <div className="page-break" />
+
+            {/* Copy 2: Vendor/Customer/Employee Copy */}
+            <PrintableGatePass gatePassId={gatePassId} copyType="vendor" />
+          </>
+        ) : (
+          <PrintableGatePass gatePassId={gatePassId} copyType="not_approved" />
+        )
+      )}
     </div>
   );
 }

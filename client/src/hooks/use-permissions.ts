@@ -104,12 +104,28 @@ export function usePermissions() {
   };
   
   /**
-   * Check if the current user can view reports
-   * 
-   * @returns boolean indicating if the user has report viewing permission
+   * Check if the current user can view reports (any report)
    */
   const canViewReports = (): boolean => {
-    return can('report', 'read');
+    if (isAdmin) return true;
+    if (can('report', 'read')) return true;
+    // Check if user has at least one specific report sub-permission
+    const reportKeys = [
+      'standard', 'custom', 'analytics', 'pending', 'returnables',
+      'gate-traffic', 'company-summary', 'dept-summary', 'user-activity',
+      'vendor-customer', 'item-movement', 'documents', 'driver-activity',
+    ];
+    return reportKeys.some(key => can('report', key));
+  };
+
+  /**
+   * Check if the current user can view a specific report tab.
+   * If user has report:read they can view all. Otherwise check sub-permission.
+   */
+  const canViewReport = (reportKey: string): boolean => {
+    if (isAdmin) return true;
+    if (can('report', 'read')) return true;
+    return can('report', reportKey);
   };
   
   /**
@@ -157,6 +173,7 @@ export function usePermissions() {
     canApproveGatePass,
     canVerifyGatePass,
     canViewReports,
+    canViewReport,
     canViewActivityLogs,
     canUseQRScanner,
     canAccessDocuments,

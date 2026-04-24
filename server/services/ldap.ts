@@ -6,30 +6,7 @@
  * can auto-provision or update the local user record.
  */
 
-// ldapauth-fork has no @types package — declare the minimal API we need.
-declare module "ldapauth-fork" {
-  interface LdapAuthOptions {
-    url: string;
-    bindDN?: string;
-    bindCredentials?: string;
-    searchBase: string;
-    searchFilter: string;
-    searchAttributes?: string[];
-    tlsOptions?: Record<string, unknown>;
-    reconnect?: boolean;
-  }
-  class LdapAuth {
-    constructor(options: LdapAuthOptions);
-    authenticate(
-      username: string,
-      password: string,
-      callback: (err: Error | null, user?: Record<string, unknown>) => void
-    ): void;
-    close(callback?: (err?: Error | null) => void): void;
-  }
-  export = LdapAuth;
-}
-
+// Types for ldapauth-fork are declared in server/types/ldapauth-fork.d.ts
 import LdapAuth from "ldapauth-fork";
 import { db } from "../db";
 import { companies } from "@shared/schema";
@@ -137,7 +114,8 @@ export async function testLdapConnection(config: LdapConfig): Promise<boolean> {
       // LDAP errors like 49 (invalid credentials for __test__) or 32 (no such
       // object) just mean the bind worked but the fake user wasn't found.
       // A network / configuration error will have a different code.
-      if (!err || err.message.includes("Invalid credentials") || err.message.includes("No Such Object")) {
+      const errMsg = typeof err === "string" ? err : err?.message ?? "";
+      if (!err || errMsg.includes("Invalid credentials") || errMsg.includes("No Such Object")) {
         return resolve(true);
       }
       reject(err);
@@ -173,12 +151,12 @@ export async function authenticateWithLdap(
     });
 
     auth.authenticate(username, password, (err, user) => {
-      auth.close((closeErr) => {
+      auth.close((closeErr: string | Error | null | undefined) => {
         if (closeErr) console.error("LDAP close error:", closeErr);
       });
 
       if (err) {
-        const msg = err.message || "Authentication failed";
+        const msg = (typeof err === "string" ? err : err?.message) || "Authentication failed";
         // Surface friendly messages for common LDAP error codes.
         if (msg.includes("Invalid credentials") || msg.includes("49")) {
           return reject(new Error("Invalid username or password"));

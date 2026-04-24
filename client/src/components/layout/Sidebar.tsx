@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { useLocation, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/use-permissions";
-import { companyName } from "@/config/company";
+import { companyName, companyLogo } from "@/config/company";
 
 export function Sidebar() {
   const [location] = useLocation();
@@ -16,6 +17,21 @@ export function Sidebar() {
     canVerifyGatePass,
     canViewActivityLogs
   } = usePermissions();
+
+  const { data: companyData } = useQuery<{ logo?: string; name?: string }>({
+    queryKey: ["companies", user?.companyId],
+    queryFn: () =>
+      fetch(`/api/companies/${user!.companyId}`, { credentials: "include" }).then(r => r.json()),
+    enabled: !!user?.companyId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Use DB logo if it's a valid base64 or external URL; ignore legacy local path references
+  const dbLogo = companyData?.logo;
+  const logoSrc =
+    dbLogo && (dbLogo.startsWith("data:") || dbLogo.startsWith("http"))
+      ? dbLogo
+      : companyLogo.full;
 
   const toggleSidebar = () => {
     setCollapsed(!collapsed);
@@ -41,12 +57,15 @@ export function Sidebar() {
         )}>
           <div className={cn(
             "flex items-center",
-            collapsed ? "justify-center w-8" : "w-[180px]"
+            collapsed ? "justify-center" : "w-[180px]"
           )}>
-            <img 
-              src="/assets/PZ-logo.png"
-              alt={`${companyName} Logo`} 
-              className="w-full h-auto object-contain mix-blend-screen"
+            <img
+              src={logoSrc}
+              alt={`${companyName} Logo`}
+              className={cn(
+                "object-contain bg-white rounded",
+                collapsed ? "h-8 w-8 p-0.5" : "w-full h-12 p-1"
+              )}
             />
           </div>
           {!collapsed && (
@@ -70,7 +89,7 @@ export function Sidebar() {
       </div>
       
       {/* Navigation Section */}
-      <nav className="flex-1 overflow-y-auto py-2">
+      <nav className="flex-1 overflow-y-auto py-2 max-h-[calc(100vh-8rem)]">
         <ul className="space-y-0.5 px-2">
           {/* Dashboard - Always visible */}
           <li>
@@ -166,6 +185,22 @@ export function Sidebar() {
             </li>
           )}
           
+          {/* Vendors - Visible to admins or users with vendor:read permission */}
+          {(isAdmin || canRead('vendor')) && (
+            <li>
+              <Link href="/vendors">
+                <div className={cn(
+                  "flex items-center px-3 py-2 rounded-md hover:bg-primary-dark transition-colors duration-200 cursor-pointer",
+                  isActive("/vendors") && "bg-primary-dark",
+                  collapsed && "justify-center px-2"
+                )}>
+                  <span className="material-icons w-6">storefront</span>
+                  {!collapsed && <span className="ml-3 truncate">Vendors</span>}
+                </div>
+              </Link>
+            </li>
+          )}
+
           {/* Drivers - Only visible if user can read drivers */}
           {canRead('driver') && (
             <li>
@@ -287,7 +322,7 @@ export function Sidebar() {
             )}
           </div>
         )}
-        <button 
+        <button
           onClick={logout}
           className={cn(
             "flex items-center text-sm w-full rounded-md hover:bg-primary-dark transition-colors",
@@ -297,6 +332,18 @@ export function Sidebar() {
           <span className="material-icons text-sm">{collapsed ? "logout" : "logout"}</span>
           {!collapsed && <span className="ml-2">Logout</span>}
         </button>
+
+        {/* Developer credit */}
+        {!collapsed && (
+          <div className="mt-3 pt-3 border-t border-white/10 text-center">
+            <p className="text-[10px] text-white/40 leading-tight">
+              Developed by
+            </p>
+            <p className="text-[10px] font-semibold text-white/60 leading-tight">
+              Creative Solution Zone
+            </p>
+          </div>
+        )}
       </div>
     </aside>
   );

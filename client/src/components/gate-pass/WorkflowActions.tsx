@@ -30,7 +30,8 @@ type ActionType =
   | "security_allow"
   | "security_send_back"
   | "complete"
-  | "resubmit";
+  | "resubmit"
+  | "force_close";
 
 interface ApprovalRecord {
   id: number;
@@ -50,7 +51,7 @@ interface ApprovalSetting {
 
 export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsProps) {
   const { user, isAdmin } = useAuth();
-  const { canApproveGatePass, canVerifyGatePass } = usePermissions();
+  const { canApproveGatePass, canVerifyGatePass, hasPermission } = usePermissions();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -108,7 +109,13 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
   const canComplete =
     (isAdmin || canVerifyGatePass()) && status === "security_allowed";
 
-  const canResubmit = (isAdmin || isCreator) && status === "sent_back";
+  const canResubmit = (isAdmin || isCreator) && ["sent_back", "rejected"].includes(status);
+
+  // Force Close: admin or gatePass:manage, on any non-terminal status
+  const terminalStatuses = ["completed", "rejected", "force_closed"];
+  const canForceClose =
+    (isAdmin || hasPermission("gatePass", "manage")) &&
+    !terminalStatuses.includes(status);
 
   const hasAnyAction =
     canApprove ||
@@ -117,7 +124,8 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
     canSecurityAllow ||
     canSecuritySendBack ||
     canComplete ||
-    canResubmit;
+    canResubmit ||
+    canForceClose;
 
   const workflowMutation = useMutation({
     mutationFn: async ({ action, remarks }: { action: ActionType; remarks?: string }) => {
@@ -129,6 +137,7 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
         security_send_back: "security-send-back",
         complete: "complete",
         resubmit: "resubmit",
+        force_close: "force-close",
       };
       const endpoint = endpointMap[action];
       const response = await apiRequest(
@@ -163,6 +172,7 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
           security_send_back: "Gate pass sent back to initiator by security",
           complete: "Gate pass marked as completed",
           resubmit: "Gate pass resubmitted for approval",
+          force_close: "Gate pass force closed",
         };
         toast({ title: "Success", description: labels[variables.action] });
       }
@@ -174,7 +184,7 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
   });
 
   const handleAction = (action: ActionType) => {
-    if (["reject", "send_back", "security_send_back"].includes(action)) {
+    if (["reject", "send_back", "security_send_back", "force_close"].includes(action)) {
       setDialogAction(action);
       setRemarks("");
     } else {
@@ -212,7 +222,7 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 [&>button]:w-full [&>button]:sm:w-auto">
         {canApprove && (
           <Button
             size="sm"
@@ -299,7 +309,24 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
             Resubmit
           </Button>
         )}
+
       </div>
+
+      {canForceClose && (
+        <div className="pt-2 border-t border-dashed border-red-200">
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-red-900 text-red-900 hover:bg-red-50 w-full sm:w-auto"
+            onClick={() => handleAction("force_close")}
+            disabled={workflowMutation.isPending}
+          >
+            <span className="material-icons text-sm mr-1">lock</span>
+            Force Close
+          </Button>
+          <p className="text-xs text-red-800 mt-1">Admin action — permanently closes this pass</p>
+        </div>
+      )}
 
       {/* Remarks dialog for Reject / Send Back / Security Send Back */}
       <Dialog open={!!dialogAction} onOpenChange={(open) => !open && setDialogAction(null)}>
@@ -310,14 +337,23 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
                 ? "Reject Gate Pass"
                 : dialogAction === "security_send_back"
                   ? "Security — Send Back Gate Pass"
-                  : "Send Back Gate Pass"}
+                  : dialogAction === "force_close"
+                    ? "Force Close Gate Pass"
+                    : "Send Back Gate Pass"}
             </DialogTitle>
           </DialogHeader>
           <div className="py-2">
+            {dialogAction === "force_close" && (
+              <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">
+                ⚠ This will permanently close this gate pass and cannot be undone. A notification will be sent to the creator.
+              </p>
+            )}
             <Label htmlFor="remarks" className="mb-1 block">
               {dialogAction === "reject"
                 ? "Reason for rejection (optional)"
-                : "Remarks (required — explain what needs to be corrected)"}
+                : dialogAction === "force_close"
+                  ? "Reason for force closing (required)"
+                  : "Remarks (required — explain what needs to be corrected)"}
             </Label>
             <Textarea
               id="remarks"
@@ -328,7 +364,9 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
                   ? "e.g. Unauthorized items listed..."
                   : dialogAction === "security_send_back"
                     ? "e.g. Driver CNIC does not match, please correct..."
-                    : "e.g. Incorrect delivery address, please update..."
+                    : dialogAction === "force_close"
+                      ? "e.g. Delivery cancelled, vehicle returned without unloading..."
+                      : "e.g. Incorrect delivery address, please update..."
               }
               className="min-h-[100px]"
             />
@@ -339,14 +377,16 @@ export function WorkflowActions({ gatePass, onActionSuccess }: WorkflowActionsPr
             </Button>
             <Button
               onClick={handleDialogConfirm}
-              disabled={dialogAction !== "reject" && !remarks.trim()}
+              disabled={!remarks.trim() && dialogAction !== "reject"}
               className={
-                dialogAction === "reject"
-                  ? "bg-red-600 hover:bg-red-700 text-white"
-                  : "bg-orange-500 hover:bg-orange-600 text-white"
+                dialogAction === "force_close"
+                  ? "bg-red-900 hover:bg-red-800 text-white"
+                  : dialogAction === "reject"
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-orange-500 hover:bg-orange-600 text-white"
               }
             >
-              Confirm
+              {dialogAction === "force_close" ? "Force Close" : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -2,7 +2,7 @@
 INSERT INTO users (full_name, email, password, department, role_id, phone_number, cnic, active)
 VALUES (
   'Admin User',
-  'admin@parazelsus.pk',
+  'admin@agp.com.pk',
   'adminpass',
   'HO',
   1, -- Admin role

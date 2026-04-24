@@ -1,0 +1,236 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - img "AGP Pharma Logo" [ref=e10]
+          - button "menu" [ref=e11] [cursor=pointer]:
+            - generic [ref=e12]: menu
+        - generic [ref=e13]:
+          - heading "AGP Pharma" [level=1] [ref=e14]
+          - paragraph [ref=e15]: Gate Pass System
+      - navigation [ref=e16]:
+        - list [ref=e17]:
+          - listitem [ref=e18]:
+            - link "dashboard Dashboard" [ref=e19] [cursor=pointer]:
+              - /url: /
+              - generic [ref=e20]:
+                - generic [ref=e21]: dashboard
+                - generic [ref=e22]: Dashboard
+          - listitem [ref=e23]:
+            - link "list_alt Gate Passes" [ref=e24] [cursor=pointer]:
+              - /url: /gate-passes
+              - generic [ref=e25]:
+                - generic [ref=e26]: list_alt
+                - generic [ref=e27]: Gate Passes
+          - listitem [ref=e28]:
+            - link "add_circle Create Gate Pass" [ref=e29] [cursor=pointer]:
+              - /url: /create-gate-pass
+              - generic [ref=e30]:
+                - generic [ref=e31]: add_circle
+                - generic [ref=e32]: Create Gate Pass
+          - listitem [ref=e33]:
+            - link "people Customers" [ref=e34] [cursor=pointer]:
+              - /url: /customers
+              - generic [ref=e35]:
+                - generic [ref=e36]: people
+                - generic [ref=e37]: Customers
+          - listitem [ref=e38]:
+            - link "storefront Vendors" [ref=e39] [cursor=pointer]:
+              - /url: /vendors
+              - generic [ref=e40]:
+                - generic [ref=e41]: storefront
+                - generic [ref=e42]: Vendors
+          - listitem [ref=e43]:
+            - link "local_shipping Drivers" [ref=e44] [cursor=pointer]:
+              - /url: /drivers
+              - generic [ref=e45]:
+                - generic [ref=e46]: local_shipping
+                - generic [ref=e47]: Drivers
+          - listitem [ref=e48]:
+            - link "description Documents" [ref=e49] [cursor=pointer]:
+              - /url: /documents
+              - generic [ref=e50]:
+                - generic [ref=e51]: description
+                - generic [ref=e52]: Documents
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - img "User Avatar" [ref=e55]
+          - generic [ref=e56]:
+            - paragraph [ref=e57]: User
+            - paragraph [ref=e58]: HO
+        - button "logout Logout" [ref=e59] [cursor=pointer]:
+          - generic [ref=e60]: logout
+          - generic [ref=e61]: Logout
+        - generic [ref=e62]:
+          - paragraph [ref=e63]: Developed by
+          - paragraph [ref=e64]: Creative Solution Zone
+    - generic [ref=e65]:
+      - banner [ref=e66]:
+        - generic [ref=e68]:
+          - generic [ref=e69]: search
+          - textbox "Search..." [ref=e70]
+        - generic [ref=e71]:
+          - button "Notifications" [ref=e73] [cursor=pointer]:
+            - img [ref=e74]
+            - generic [ref=e77]: "1"
+          - button "help_outline" [ref=e78] [cursor=pointer]:
+            - generic [ref=e79]: help_outline
+          - generic [ref=e81]:
+            - generic [ref=e82]: User
+            - generic [ref=e83]: U
+      - main [ref=e84]:
+        - generic [ref=e85]:
+          - heading "Create New Gate Pass" [level=1] [ref=e86]
+          - link "arrow_back Back to Gate Passes" [ref=e87] [cursor=pointer]:
+            - /url: /gate-passes
+            - generic [ref=e88]:
+              - generic [ref=e89]: arrow_back
+              - text: Back to Gate Passes
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - heading "Gate Pass Type" [level=3] [ref=e94]
+            - generic [ref=e96]:
+              - button "Outward Goods leaving the premises" [ref=e97] [cursor=pointer]:
+                - generic [ref=e98]: Outward
+                - generic [ref=e99]: Goods leaving the premises
+              - button "Inward Goods entering the premises" [ref=e100] [cursor=pointer]:
+                - generic [ref=e101]: Inward
+                - generic [ref=e102]: Goods entering the premises
+              - button "Returnable Goods leaving but expected to return" [ref=e103] [cursor=pointer]:
+                - generic [ref=e104]: Returnable
+                - generic [ref=e105]: Goods leaving but expected to return
+          - generic [ref=e106]:
+            - heading "Basic Information" [level=3] [ref=e107]
+            - generic [ref=e108]:
+              - generic [ref=e109]:
+                - generic [ref=e110]:
+                  - generic [ref=e111]: Issue Date
+                  - button "Issue Date" [ref=e112] [cursor=pointer]:
+                    - text: 13 Mar 2026
+                    - img
+                - generic [ref=e113]:
+                  - text: Department
+                  - textbox "Department" [disabled] [ref=e114]: HO
+                - generic [ref=e115]:
+                  - text: Gate
+                  - combobox "Gate" [ref=e116] [cursor=pointer]:
+                    - generic: Select gate (optional)
+                    - img [ref=e117]
+                  - combobox [ref=e119]
+              - generic [ref=e120]:
+                - generic [ref=e122]:
+                  - generic [ref=e123]: Customer
+                  - button "Select a customer" [ref=e124] [cursor=pointer]:
+                    - generic [ref=e125]: Select a customer
+                    - img
+                - generic [ref=e126]:
+                  - text: Customer / Person Name
+                  - textbox "Customer / Person Name" [active] [ref=e127]:
+                    - /placeholder: Enter customer name
+                    - text: Test Customer
+                - generic [ref=e128]:
+                  - text: Customer Phone Number
+                  - textbox "Customer Phone Number" [ref=e129]:
+                    - /placeholder: e.g. 0300-1234567
+                - generic [ref=e130]:
+                  - text: Delivery Address
+                  - textbox "Delivery Address" [ref=e131]:
+                    - /placeholder: Enter delivery address
+              - generic [ref=e132]:
+                - generic [ref=e133]:
+                  - text: Created By
+                  - textbox "Created By" [ref=e134]: User
+                  - paragraph [ref=e135]: Auto-filled from your account
+                - generic [ref=e136]:
+                  - text: Created Date & Time
+                  - textbox [ref=e137]: 14 Mar 2026, 03:10 am
+          - generic [ref=e138]:
+            - heading "Item Details" [level=3] [ref=e139]
+            - table [ref=e141]:
+              - rowgroup [ref=e142]:
+                - row "Item Name SKU Number Quantity Unit Actions" [ref=e143]:
+                  - columnheader "Item Name" [ref=e144]
+                  - columnheader "SKU Number" [ref=e145]
+                  - columnheader "Quantity" [ref=e146]
+                  - columnheader "Unit" [ref=e147]
+                  - columnheader "Actions" [ref=e148]
+              - rowgroup [ref=e149]:
+                - row [ref=e150]:
+                  - cell [ref=e151]:
+                    - generic [ref=e152]:
+                      - button "Search item master" [ref=e153] [cursor=pointer]:
+                        - img
+                      - textbox "Item name" [ref=e154]
+                  - cell [ref=e155]:
+                    - textbox "SKU number" [ref=e156]
+                  - cell [ref=e157]:
+                    - spinbutton [ref=e158]: "1"
+                  - cell [ref=e159]:
+                    - textbox "e.g. Pcs, KG" [ref=e160]
+                  - cell [ref=e161]
+            - generic [ref=e162]:
+              - button "add_circle Add Another Item" [ref=e163] [cursor=pointer]:
+                - generic [ref=e164]: add_circle
+                - text: Add Another Item
+              - generic [ref=e166]:
+                - generic [ref=e167]: "Total Items: 1"
+                - generic [ref=e168]: "Total Quantity: 1"
+          - generic [ref=e169]:
+            - heading "Notes" [level=3] [ref=e170]
+            - generic [ref=e172]:
+              - text: Additional Notes
+              - textbox "Additional Notes" [ref=e173]:
+                - /placeholder: Enter any additional notes or comments here...
+          - generic [ref=e174]:
+            - heading "Driver & Delivery Details" [level=3] [ref=e175]
+            - generic [ref=e176]:
+              - generic [ref=e177]:
+                - generic [ref=e179]:
+                  - generic [ref=e180]: Driver
+                  - button "Select a driver" [ref=e181] [cursor=pointer]:
+                    - generic [ref=e182]: Select a driver
+                    - img
+                - generic [ref=e183]:
+                  - text: Driver Name
+                  - textbox "Driver Name" [ref=e184]:
+                    - /placeholder: Enter driver name
+                - generic [ref=e185]:
+                  - text: Driver Mobile Number
+                  - textbox "Driver Mobile Number" [ref=e186]:
+                    - /placeholder: e.g. 0300-1234567
+                - generic [ref=e187]:
+                  - text: Driver CNIC Number
+                  - textbox "Driver CNIC Number" [ref=e188]:
+                    - /placeholder: e.g. 42201-1234567-8
+              - generic [ref=e190]:
+                - text: Delivery Van Number
+                - textbox "Delivery Van Number" [ref=e191]:
+                  - /placeholder: e.g. KHI-12345
+          - generic [ref=e192]:
+            - heading "Attach Documents (Optional)" [level=3] [ref=e193]
+            - generic [ref=e195]:
+              - generic [ref=e198] [cursor=pointer]:
+                - generic [ref=e199]: cloud_upload
+                - paragraph [ref=e200]: Click to upload or drag and drop
+                - paragraph [ref=e201]: PDF, Images, or Documents (max. 7.5MB)
+              - generic [ref=e202]:
+                - generic [ref=e203]: Uploaded Documents
+                - generic [ref=e205]: No documents uploaded yet
+              - button "add Add Document" [ref=e207] [cursor=pointer]:
+                - generic [ref=e208]: add
+                - text: Add Document
+          - generic [ref=e209]:
+            - button "Cancel" [ref=e210] [cursor=pointer]
+            - button "save Save & Submit" [ref=e211] [cursor=pointer]:
+              - generic [ref=e212]: save
+              - text: Save & Submit
+            - button "print Save & Print" [ref=e213] [cursor=pointer]:
+              - generic [ref=e214]: print
+              - text: Save & Print
+  - region "Notifications (F8)":
+    - list
+```

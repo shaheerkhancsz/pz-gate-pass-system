@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import twilio from 'twilio';
 import { db } from '../db';
+import { storage } from '../storage';
 import * as schema from '@shared/schema';
 import { and, eq, inArray, isNull, lte } from 'drizzle-orm';
 
@@ -315,7 +316,7 @@ export function generateGatePassUpdateEmail(gatePass: any): string {
       </div>
       
       <div style="margin-top: 30px; font-size: 0.8em; color: #888; text-align: center;">
-        <p>This is an automated message from the Parazelsus Gate Pass System.</p>
+        <p>This is an automated message from the AGP Pharma Gate Pass System.</p>
       </div>
     </div>
   `;
@@ -325,7 +326,7 @@ export function generateGatePassUpdateEmail(gatePass: any): string {
  * Generate SMS template for gate pass updates
  */
 export function generateGatePassUpdateSMS(gatePass: any): string {
-  return `Parazelsus Gate Pass Update: ${gatePass.gatePassNumber} is now ${gatePass.status.toUpperCase()}. Driver: ${gatePass.driverName}. Contact: ${gatePass.driverMobile}.`;
+  return `AGP Gate Pass Update: ${gatePass.gatePassNumber} is now ${gatePass.status.toUpperCase()}. Driver: ${gatePass.driverName}. Contact: ${gatePass.driverMobile}.`;
 }
 
 // =============================================
@@ -340,7 +341,7 @@ async function getUsersWithPermission(
   module: string,
   action: string,
   department?: string
-): Promise<Array<{ email: string; fullName: string; phone: string | null }>> {
+): Promise<Array<{ id: number; email: string; fullName: string; phone: string | null }>> {
   try {
     const permRows = await db
       .select({ roleId: schema.permissions.roleId })
@@ -362,7 +363,7 @@ async function getUsersWithPermission(
     }
 
     return await db
-      .select({ email: schema.users.email, fullName: schema.users.fullName, phone: schema.users.phoneNumber })
+      .select({ id: schema.users.id, email: schema.users.email, fullName: schema.users.fullName, phone: schema.users.phoneNumber })
       .from(schema.users)
       .where(and(...conditions));
   } catch (error) {
@@ -594,6 +595,15 @@ export async function notifyHodOfNewPass(gatePass: any): Promise<void> {
     await Promise.allSettled([
       ...hodUsers.map(u => sendEmail(u.email, subject, html)),
       ...hodUsers.filter(u => u.phone).map(u => sendWhatsApp(u.phone!, whatsappMsg)),
+      ...hodUsers.map(u => storage.createNotification({
+        userId: u.id,
+        title: `New Gate Pass — #${gatePass.gatePassNumber}`,
+        message: `A new gate pass from ${gatePass.department} requires your approval.`,
+        type: 'info',
+        read: false,
+        entityType: 'gatePass',
+        entityId: gatePass.id,
+      }).catch(() => {})),
     ]);
   } catch (error) {
     console.error('notifyHodOfNewPass error:', error);
@@ -611,7 +621,7 @@ export async function notifyInitiatorOfHodDecision(
 ): Promise<void> {
   try {
     const [creator] = await db
-      .select({ email: schema.users.email, phone: schema.users.phoneNumber })
+      .select({ id: schema.users.id, email: schema.users.email, phone: schema.users.phoneNumber })
       .from(schema.users)
       .where(eq(schema.users.id, gatePass.createdById))
       .limit(1);
@@ -623,13 +633,31 @@ export async function notifyInitiatorOfHodDecision(
       rejected:  'Rejected',
       sent_back: 'Sent Back for Revision',
     };
+    const notifTypeMap: Record<string, 'success' | 'error' | 'warning'> = {
+      approved: 'success',
+      rejected: 'error',
+      sent_back: 'warning',
+    };
     const subject = `Gate Pass #${gatePass.gatePassNumber} — ${actionLabel[action] || action}`;
     const html = buildHodDecisionEmail(gatePass, action, actorName, remarks);
     const whatsappMsg = buildWhatsAppDecisionMessage(gatePass, action, actorName, remarks);
 
+    const notifMessage = action === 'sent_back'
+      ? `${actorName} sent back #${gatePass.gatePassNumber} for revision${remarks ? `: "${remarks}"` : '.'}`
+      : `${actorName} ${action === 'approved' ? 'approved' : 'rejected'} your gate pass #${gatePass.gatePassNumber}.`;
+
     await Promise.allSettled([
       creator.email ? sendEmail(creator.email, subject, html) : Promise.resolve(false),
       creator.phone ? sendWhatsApp(creator.phone, whatsappMsg) : Promise.resolve(false),
+      storage.createNotification({
+        userId: creator.id,
+        title: `Gate Pass #${gatePass.gatePassNumber} — ${actionLabel[action]}`,
+        message: notifMessage,
+        type: notifTypeMap[action] || 'info',
+        read: false,
+        entityType: 'gatePass',
+        entityId: gatePass.id,
+      }).catch(() => {}),
     ]);
   } catch (error) {
     console.error('notifyInitiatorOfHodDecision error:', error);
@@ -651,6 +679,15 @@ export async function notifySecurityOfApprovedPass(gatePass: any): Promise<void>
     await Promise.allSettled([
       ...securityUsers.map(u => sendEmail(u.email, subject, html)),
       ...securityUsers.filter(u => u.phone).map(u => sendWhatsApp(u.phone!, whatsappMsg)),
+      ...securityUsers.map(u => storage.createNotification({
+        userId: u.id,
+        title: `Awaiting Security — #${gatePass.gatePassNumber}`,
+        message: `Gate pass #${gatePass.gatePassNumber} has been HOD approved and is awaiting your security clearance.`,
+        type: 'info',
+        read: false,
+        entityType: 'gatePass',
+        entityId: gatePass.id,
+      }).catch(() => {})),
     ]);
   } catch (error) {
     console.error('notifySecurityOfApprovedPass error:', error);
@@ -672,6 +709,15 @@ export async function notifyHodOfResubmission(gatePass: any): Promise<void> {
     await Promise.allSettled([
       ...hodUsers.map(u => sendEmail(u.email, subject, html)),
       ...hodUsers.filter(u => u.phone).map(u => sendWhatsApp(u.phone!, whatsappMsg)),
+      ...hodUsers.map(u => storage.createNotification({
+        userId: u.id,
+        title: `Gate Pass Resubmitted — #${gatePass.gatePassNumber}`,
+        message: `Gate pass #${gatePass.gatePassNumber} has been revised and resubmitted for your approval.`,
+        type: 'info',
+        read: false,
+        entityType: 'gatePass',
+        entityId: gatePass.id,
+      }).catch(() => {})),
     ]);
   } catch (error) {
     console.error('notifyHodOfResubmission error:', error);
@@ -725,6 +771,20 @@ export async function checkAndNotifyOverduePasses(): Promise<{ notified: number;
       const html = buildOverduePassEmail(passes);
 
       await sendEmail(creator.email, subject, html).catch(() => {});
+
+      // Also create in-app notifications per overdue pass
+      for (const pass of passes) {
+        await storage.createNotification({
+          userId: creatorId,
+          title: `Overdue Returnable — #${(pass as any).gatePassNumber}`,
+          message: `Gate pass #${(pass as any).gatePassNumber} is overdue for return. Please follow up.`,
+          type: 'warning',
+          read: false,
+          entityType: 'gatePass',
+          entityId: pass.id,
+        }).catch(() => {});
+      }
+
       notified++;
     }
 

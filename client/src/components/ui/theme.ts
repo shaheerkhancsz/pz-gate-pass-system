@@ -41,11 +41,14 @@ export const getStatusBadgeClass = (status: string) => {
     case "rejected":
       return "bg-error bg-opacity-10 text-error";
     case "approved":
+    case "hod_approved":
       return "bg-blue-100 text-blue-700";
     case "security_allowed":
       return "bg-purple-100 text-purple-700";
     case "sent_back":
       return "bg-orange-100 text-orange-700";
+    case "force_closed":
+      return "bg-red-900 bg-opacity-10 text-red-900";
     default:
       return "bg-neutral-gray bg-opacity-10 text-neutral-gray";
   }
@@ -56,10 +59,12 @@ export const getStatusLabel = (status: string): string => {
   switch (status.toLowerCase()) {
     case "pending": return "Pending";
     case "approved": return "Approved";
+    case "hod_approved": return "HOD Approved";
     case "security_allowed": return "Security Allowed";
     case "completed": return "Completed";
     case "rejected": return "Rejected";
     case "sent_back": return "Sent Back";
+    case "force_closed": return "Force Closed";
     default: return status.charAt(0).toUpperCase() + status.slice(1);
   }
 };

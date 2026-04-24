@@ -19,7 +19,7 @@ async function createTestUsers() {
   const testUsers: InsertUser[] = [
     {
       fullName: "Admin User",
-      email: "admin@parazelsus.pk",
+      email: "admin@agp.com.pk",
       password: await bcrypt.hash("admin123", 10),
       department: "Administration",
       roleId: 1, // Admin role
@@ -29,7 +29,7 @@ async function createTestUsers() {
     },
     {
       fullName: "Manager User",
-      email: "manager@parazelsus.pk",
+      email: "manager@agp.com.pk",
       password: await bcrypt.hash("manager123", 10),
       department: "Operations",
       roleId: 2, // Manager role
@@ -39,7 +39,7 @@ async function createTestUsers() {
     },
     {
       fullName: "Staff User",
-      email: "staff@parazelsus.pk",
+      email: "staff@agp.com.pk",
       password: await bcrypt.hash("staff123", 10),
       department: "Warehouse",
       roleId: 3, // Staff role
@@ -49,7 +49,7 @@ async function createTestUsers() {
     },
     {
       fullName: "Security User",
-      email: "security@parazelsus.pk",
+      email: "security@agp.com.pk",
       password: await bcrypt.hash("security123", 10),
       department: "Security",
       roleId: 4, // Security role
@@ -59,7 +59,7 @@ async function createTestUsers() {
     },
     {
       fullName: "Viewer User",
-      email: "viewer@parazelsus.pk",
+      email: "viewer@agp.com.pk",
       password: await bcrypt.hash("viewer123", 10),
       department: "Finance",
       roleId: 5, // Viewer role

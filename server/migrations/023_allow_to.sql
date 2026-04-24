@@ -1,0 +1,1 @@
+ALTER TABLE gate_passes ADD COLUMN IF NOT EXISTS allow_to VARCHAR(255) NULL AFTER notes;

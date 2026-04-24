@@ -15,7 +15,7 @@ export default function GatePassList() {
   return (
     <AppLayout>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-medium text-neutral-dark">Gate Passes List</h1>
+        <h1 className="text-xl sm:text-2xl font-medium text-neutral-dark">Gate Passes List</h1>
         <Link href="/create-gate-pass">
           <Button className="bg-primary hover:bg-primary-dark text-white">
             <span className="material-icons mr-1">add</span> Create New

@@ -61,10 +61,8 @@ export function DocumentList({ entityType, entityId }: DocumentListProps) {
     queryKey: [`/api/documents/entity/${entityType}/${entityId}`],
     queryFn: async () => {
       if (!entityId) return [];
-      const response = await fetch(`/api/documents/entity/${entityType}/${entityId}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch documents');
-      }
+      const response = await fetch(`/api/documents/entity/${entityType}/${entityId}`, { credentials: 'include' });
+      if (!response.ok) throw new Error('Failed to fetch documents');
       return response.json();
     },
     enabled: !!entityId

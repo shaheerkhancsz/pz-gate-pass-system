@@ -90,9 +90,9 @@ export function formatCNIC(input: string): string {
   return formattedCNIC;
 }
 
-// Function to validate phone number format (e.g., 0306-2228391)
+// Function to validate phone number format (e.g., 0306-2228391 or 03062228391)
 export function validatePhoneNumber(phone: string): boolean {
-  const phonePattern = /^03\d{2}-\d{7}$/;
+  const phonePattern = /^03\d{2}-?\d{7}$/;
   return phonePattern.test(phone);
 }
 
